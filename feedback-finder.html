@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Feedback Finder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: control strip on top, spectrum + waterfall left, live candidates + log right; stacks on narrow screens. */
+:root {
+  --bg: #0f1418;
+  --panel: #161d23;
+  --line: #26313a;
+  --fg: #dce4ea;
+  --muted: #8796a3;
+  --accent: #f2a93b;      /* amber: the "LED" of the tool */
+  --trace: #6cc4e0;       /* spectrum trace */
+  --fb: #ff5a4f;          /* feedback */
+  --ring: #f2a93b;        /* ringing */
+  --ok: #57c48a;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); }
+body { padding: 16px max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); }
+h1 { font: 600 18px/1.2 var(--mono); letter-spacing: .04em; margin: 0; text-transform: uppercase; }
+h1 span { color: var(--accent); }
+h2 { font: 600 12px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 0; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin-bottom: 14px; }
+header p { margin: 0; color: var(--muted); max-width: 70ch; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: flex-end; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; margin-bottom: 14px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field label { font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.field output { font: 500 12px var(--mono); color: var(--fg); }
+select, input[type=number] { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; font: 13px var(--sans); max-width: 260px; }
+input[type=number] { width: 90px; font-family: var(--mono); }
+input[type=range] { accent-color: var(--accent); width: 140px; }
+button { font: 600 12px var(--mono); letter-spacing: .06em; text-transform: uppercase; border-radius: 4px; padding: 8px 14px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); color: #1b1305; border-color: var(--accent); }
+button.primary.live { background: var(--fb); border-color: var(--fb); color: #fff; }
+button.small { padding: 4px 8px; font-size: 11px; }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.meter { display: flex; flex-direction: column; gap: 4px; min-width: 160px; }
+.meterbar { position: relative; height: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
+.meterbar i { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--ok) 0 70%, var(--accent) 70% 90%, var(--fb) 90%); }
+.meterbar b { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg); left: 0; }
+.meter output { font: 12px var(--mono); font-variant-numeric: tabular-nums; }
+.clip { color: var(--fb); font-weight: 600; }
+
+.grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 980px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+canvas { display: block; width: 100%; background: var(--bg); border-radius: 4px; }
+#spec { height: 320px; }
+#wf { height: 180px; image-rendering: pixelated; }
+.status { font: 12px var(--mono); color: var(--muted); }
+.status.err { color: var(--fb); }
+
+table { width: 100%; border-collapse: collapse; font: 12.5px var(--mono); font-variant-numeric: tabular-nums; }
+th { text-align: left; font-weight: 500; color: var(--muted); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; padding: 4px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td.f { font-weight: 600; font-size: 14px; }
+.scroll { overflow-x: auto; }
+.chip { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 11px; font-weight: 600; letter-spacing: .05em; }
+.chip.fb { background: color-mix(in srgb, var(--fb) 22%, transparent); color: var(--fb); }
+.chip.ring { background: color-mix(in srgb, var(--ring) 22%, transparent); color: var(--ring); }
+.chip.watch { background: color-mix(in srgb, var(--trace) 18%, transparent); color: var(--trace); }
+.empty { color: var(--muted); font-size: 13px; padding: 10px 2px; }
+.x { background: none; border: none; color: var(--muted); padding: 2px 6px; cursor: pointer; font-size: 14px; }
+.x:hover { color: var(--fb); }
+details { color: var(--muted); font-size: 13px; }
+details summary { cursor: pointer; color: var(--fg); }
+details p, details li { max-width: 75ch; }
+.demo-tag { font: 600 11px var(--mono); color: var(--accent); letter-spacing: .08em; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Feedback <span>Finder</span></h1>
+  <nav aria-label="Tools" style="display:flex;gap:4px"><a href="room-tuning.html" style="font:600 12px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-decoration:none;padding:6px 10px">Room tuning</a><a href="feedback-finder.html" aria-current="page" style="font:600 12px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--fg);text-decoration:none;padding:6px 10px;border:1px solid var(--line);border-radius:4px;background:var(--panel)">Feedback finder</a></nav>
+  <p>Point a measurement mic into the room and slowly bring up the system gain. Tones that hang, stand clear of the spectrum and grow get flagged and logged with a suggested notch.</p>
+</header>
+
+<section class="controls" aria-label="Input and detection settings">
+  <div class="field">
+    <label for="dev">Input device</label>
+    <select id="dev"><option value="">Default input</option></select>
+  </div>
+  <div class="field">
+    <label for="ch">Channel</label>
+    <select id="ch"><option value="0">1</option><option value="1">2</option></select>
+  </div>
+  <div class="field">
+    <label for="fft">FFT size</label>
+    <select id="fft">
+      <option value="8192">8192 · fast</option>
+      <option value="16384" selected>16384 · balanced</option>
+      <option value="32768">32768 · fine</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="prom">Prominence <output id="promOut">12 dB</output></label>
+    <input type="range" id="prom" min="6" max="30" step="1" value="12">
+  </div>
+  <div class="field">
+    <label for="hold">Must persist <output id="holdOut">400 ms</output></label>
+    <input type="range" id="hold" min="100" max="2000" step="50" value="400">
+  </div>
+  <div class="field">
+    <label for="floor">Ignore below <output id="floorOut">−90 dBFS</output></label>
+    <input type="range" id="floor" min="-130" max="-30" step="1" value="-90">
+  </div>
+  <div class="field">
+    <label for="fmin">Range Hz</label>
+    <div class="btns"><input type="number" id="fmin" value="60" min="20" max="20000" aria-label="Lowest frequency"><input type="number" id="fmax" value="16000" min="20" max="24000" aria-label="Highest frequency"></div>
+  </div>
+  <div class="meter" aria-live="off">
+    <h2>Input level</h2>
+    <div class="meterbar"><i id="mRms"></i><b id="mPk"></b></div>
+    <output id="mTxt">— dBFS</output>
+  </div>
+  <div class="btns">
+    <button id="go" class="primary">Start mic</button>
+    <button id="demo">Run demo</button>
+  </div>
+</section>
+
+<div class="grid">
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Spectrum <span id="demoTag" class="demo-tag" hidden>· DEMO SIGNAL</span></h2>
+      <span class="status" id="status">Idle. Choose your interface input and press Start mic.</span>
+    </div>
+    <canvas id="spec" aria-label="Live spectrum with detected peaks marked"></canvas>
+    <canvas id="wf" aria-label="Waterfall: time runs downward, steady horizontal lines are sustained tones"></canvas>
+  </section>
+
+  <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+    <section class="panel">
+      <div class="panel-head"><h2>Live candidates</h2><span class="status" id="res"></span></div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Freq</th><th>Note</th><th>Level</th><th>Prom.</th><th>Held</th><th>Growth</th><th></th></tr></thead>
+          <tbody id="live"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="liveEmpty">Nothing standing out right now.</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Feedback log</h2>
+        <div class="btns">
+          <button class="small" id="copy">Copy CSV</button>
+          <button class="small" id="save">Save CSV</button>
+          <button class="small" id="clear">Clear</button>
+        </div>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Freq</th><th>Note</th><th>GEQ band</th><th>Hits</th><th>Peak</th><th>Notch</th><th></th></tr></thead>
+          <tbody id="log"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="logEmpty">Frequencies that ring will be listed here, worst first.</div>
+    </section>
+
+    <details class="panel">
+      <summary>How detection works</summary>
+      <p>Every 40 ms the tool takes an FFT of the mic signal and finds narrow peaks. A peak becomes a candidate when it is:</p>
+      <ul>
+        <li><b>Prominent</b>: higher than the spectrum around it (±~1/6 octave) by at least the Prominence setting.</li>
+        <li><b>Persistent</b>: still there at the same frequency for at least the Must persist time.</li>
+        <li><b>Pure</b>: without strong 2nd/3rd harmonics. Voices and instruments have harmonics; feedback is close to a sine.</li>
+        <li><b>Growing or steady</b>: feedback rises in a straight line in dB over time. Growth adds to the score.</li>
+      </ul>
+      <p>Amber <b>RINGING</b> means likely; red <b>FEEDBACK</b> means all checks agree. Both go into the log. Run pink noise or speech through the system during ring-out if you want fewer false hits from steady music notes.</p>
+      <p>The mic's calibration file isn't needed: only the frequency matters here, not absolute level. Browser echo cancelling, noise suppression and auto gain are switched off for the input.</p>
+    </details>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const els = {
+  dev: $("dev"), ch: $("ch"), fft: $("fft"), prom: $("prom"), hold: $("hold"), floor: $("floor"),
+  fmin: $("fmin"), fmax: $("fmax"), go: $("go"), demo: $("demo"), status: $("status"),
+  spec: $("spec"), wf: $("wf"), live: $("live"), liveEmpty: $("liveEmpty"), log: $("log"),
+  logEmpty: $("logEmpty"), res: $("res"), demoTag: $("demoTag"),
+  mRms: $("mRms"), mPk: $("mPk"), mTxt: $("mTxt"),
+};
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COL = { trace: css("--trace"), fb: css("--fb"), ring: css("--ring"), line: css("--line"), muted: css("--muted"), fg: css("--fg"), accent: css("--accent") };
+
+// ---------- settings persistence (per-browser convenience only) ----------
+const SKEY = "feedback-finder-settings";
+function saveSettings() {
+  try {
+    localStorage.setItem(SKEY, JSON.stringify({
+      dev: els.dev.value, ch: els.ch.value, fft: els.fft.value, prom: els.prom.value,
+      hold: els.hold.value, floor: els.floor.value, fmin: els.fmin.value, fmax: els.fmax.value,
+    }));
+  } catch (_) {}
+}
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SKEY) || "null");
+    if (!s) return;
+    for (const k of ["fft", "prom", "hold", "floor", "fmin", "fmax"]) if (s[k] != null) els[k].value = s[k];
+    els.dev.dataset.want = s.dev || "";
+    els.ch.dataset.want = s.ch || "0";
+  } catch (_) {}
+}
+function syncOutputs() {
+  $("promOut").textContent = els.prom.value + " dB";
+  $("holdOut").textContent = els.hold.value + " ms";
+  $("floorOut").textContent = "−" + Math.abs(els.floor.value) + " dBFS";
+}
+for (const k of ["prom", "hold", "floor", "fmin", "fmax", "ch", "dev"]) els[k].addEventListener("input", () => { syncOutputs(); saveSettings(); });
+els.ch.addEventListener("change", () => { if (engine.splitter) rewireChannel(); });
+els.fft.addEventListener("change", () => { saveSettings(); if (engine.analyser) { engine.analyser.fftSize = +els.fft.value; allocBuffers(); tracks.length = 0; } });
+
+// ---------- music helpers ----------
+const NOTES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+function noteOf(f) {
+  const m = 69 + 12 * Math.log2(f / 440);
+  const r = Math.round(m);
+  const cents = Math.round((m - r) * 100);
+  return { name: NOTES[(r % 12 + 12) % 12] + (Math.floor(r / 12) - 1), cents };
+}
+const GEQ = [20,25,31.5,40,50,63,80,100,125,160,200,250,315,400,500,630,800,1000,1250,1600,2000,2500,3150,4000,5000,6300,8000,10000,12500,16000,20000];
+function geqBand(f) {
+  let best = GEQ[0], d = Infinity;
+  for (const b of GEQ) { const dd = Math.abs(Math.log2(f / b)); if (dd < d) { d = dd; best = b; } }
+  return best;
+}
+const fmtHz = f => f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 2 : 3).replace(/\.?0+$/, "") + " kHz" : f.toFixed(f < 100 ? 1 : 0) + " Hz";
+const fmtBand = b => b >= 1000 ? (b / 1000) + "k" : String(b);
+const centsDiff = (a, b) => 1200 * Math.log2(a / b);
+
+// ---------- audio engine ----------
+const engine = { ctx: null, analyser: null, stream: null, splitter: null, src: null, demo: null, timer: 0, raf: 0, running: false, mode: null, nCh: 2 };
+let spec, tbuf; // Float32Arrays
+function allocBuffers() {
+  spec = new Float32Array(engine.analyser.frequencyBinCount);
+  tbuf = new Float32Array(engine.analyser.fftSize);
+  els.res.textContent = (engine.ctx.sampleRate / engine.analyser.fftSize).toFixed(2) + " Hz/bin · " +
+    Math.round(1000 * engine.analyser.fftSize / engine.ctx.sampleRate) + " ms window";
+}
+
+async function listDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "audioinput");
+  const want = els.dev.value || els.dev.dataset.want || "";
+  els.dev.textContent = "";
+  const def = document.createElement("option"); def.value = ""; def.textContent = "Default input"; els.dev.appendChild(def);
+  devs.forEach((d, i) => {
+    if (d.deviceId === "default" || !d.deviceId) return;
+    const o = document.createElement("option");
+    o.value = d.deviceId; o.textContent = d.label || ("Input " + (i + 1));
+    els.dev.appendChild(o);
+  });
+  if ([...els.dev.options].some(o => o.value === want)) els.dev.value = want;
+}
+
+function setChannels(n) {
+  engine.nCh = n;
+  const want = els.ch.value || els.ch.dataset.want || "0";
+  els.ch.textContent = "";
+  for (let i = 0; i < n; i++) { const o = document.createElement("option"); o.value = i; o.textContent = String(i + 1); els.ch.appendChild(o); }
+  els.ch.value = +want < n ? want : "0";
+}
+function rewireChannel() {
+  try { engine.splitter.disconnect(); } catch (_) {}
+  engine.splitter.connect(engine.analyser, Math.min(+els.ch.value, engine.nCh - 1), 0);
+  saveSettings();
+}
+
+async function start(mode) {
+  await stop();
+  try {
+    engine.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
+    await engine.ctx.resume();
+    const an = engine.analyser = engine.ctx.createAnalyser();
+    an.fftSize = +els.fft.value; an.smoothingTimeConstant = 0; an.minDecibels = -160; an.maxDecibels = 0;
+    allocBuffers();
+    if (mode === "mic") {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("This browser can't open audio inputs here. Open the file in Chrome or Edge.");
+      const devId = els.dev.value;
+      engine.stream = await navigator.mediaDevices.getUserMedia({ audio: {
+        deviceId: devId ? { exact: devId } : undefined,
+        echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+        channelCount: { ideal: 32 },
+      }});
+      const tr = engine.stream.getAudioTracks()[0];
+      const n = Math.max(1, tr.getSettings().channelCount || 1);
+      engine.src = engine.ctx.createMediaStreamSource(engine.stream);
+      engine.src.channelCountMode = "explicit"; engine.src.channelCount = n;
+      engine.splitter = engine.ctx.createChannelSplitter(n);
+      engine.src.connect(engine.splitter);
+      setChannels(n);
+      rewireChannel();
+      await listDevices();
+      if (!devId && tr.getSettings().deviceId) { /* keep default */ }
+      setStatus("Listening: " + (tr.label || "input") + " · ch " + (+els.ch.value + 1) + " of " + n + " · " + engine.ctx.sampleRate + " Hz");
+    } else {
+      engine.demo = buildDemo(engine.ctx, an);
+      setStatus("Demo: pink noise, chords and an occasional growing feedback tone. Nothing is played aloud.");
+    }
+    engine.mode = mode; engine.running = true;
+    els.demoTag.hidden = mode !== "demo";
+    (mode === "mic" ? els.go : els.demo).classList.add("primary", "live");
+    (mode === "mic" ? els.go : els.demo).textContent = "Stop";
+    t0 = performance.now(); tracks.length = 0;
+    engine.timer = setInterval(analyse, 40);
+    engine.raf = requestAnimationFrame(draw);
+  } catch (e) {
+    await stop();
+    const msg = e && e.name === "NotAllowedError" ? "Microphone access was blocked. Allow it in the browser's address bar, then press Start mic again."
+      : e && e.name === "OverconstrainedError" ? "That input isn't available any more. Pick another device and try again."
+      : (e && e.message) || String(e);
+    setStatus(msg, true);
+  }
+}
+async function stop() {
+  clearInterval(engine.timer); cancelAnimationFrame(engine.raf);
+  if (engine.demo) engine.demo.stop();
+  if (engine.stream) engine.stream.getTracks().forEach(t => t.stop());
+  if (engine.ctx) { try { await engine.ctx.close(); } catch (_) {} }
+  Object.assign(engine, { ctx: null, analyser: null, stream: null, splitter: null, src: null, demo: null, running: false, mode: null });
+  els.go.textContent = "Start mic"; els.go.className = "primary";
+  els.demo.textContent = "Run demo"; els.demo.className = "";
+  els.demoTag.hidden = true;
+}
+function setStatus(t, err) { els.status.textContent = t; els.status.classList.toggle("err", !!err); }
+
+els.go.addEventListener("click", () => engine.mode === "mic" ? (stop(), setStatus("Stopped.")) : start("mic"));
+els.demo.addEventListener("click", () => engine.mode === "demo" ? (stop(), setStatus("Stopped.")) : start("demo"));
+navigator.mediaDevices?.addEventListener?.("devicechange", listDevices);
+
+// ---------- demo signal ----------
+function buildDemo(ctx, dest) {
+  const out = ctx.createGain(); out.gain.value = 1; out.connect(dest);
+  // pink-ish noise
+  const len = ctx.sampleRate * 4, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+  let b0 = 0, b1 = 0, b2 = 0;
+  for (let i = 0; i < len; i++) { const w = Math.random() * 2 - 1; b0 = .99765 * b0 + w * .099046; b1 = .963 * b1 + w * .2965164; b2 = .57 * b2 + w * 1.0526913; d[i] = (b0 + b1 + b2 + w * .1848) * .02; }
+  const noise = ctx.createBufferSource(); noise.buffer = buf; noise.loop = true; noise.connect(out); noise.start();
+  // "music": sawtooth chord that changes every 1.2 s
+  const chords = [[220, 277.2, 329.6], [196, 246.9, 293.7], [174.6, 220, 261.6], [246.9, 311.1, 370]];
+  const voices = chords[0].map(() => { const o = ctx.createOscillator(); o.type = "sawtooth"; const g = ctx.createGain(); g.gain.value = .012; o.connect(g).connect(out); o.start(); return o; });
+  let ci = 0;
+  const chordT = setInterval(() => { ci = (ci + 1) % chords.length; voices.forEach((o, i) => o.frequency.setValueAtTime(chords[ci][i], ctx.currentTime)); }, 1200);
+  // feedback: a sine that grows exponentially, then gets "pulled down"
+  const fbFreqs = [2512, 630, 3967, 1247, 315];
+  let fi = 0;
+  const howl = () => {
+    const o = ctx.createOscillator(); o.frequency.value = fbFreqs[fi++ % fbFreqs.length] * (1 + (Math.random() - .5) * .004);
+    const g = ctx.createGain(), t = ctx.currentTime;
+    g.gain.setValueAtTime(.0003, t); g.gain.exponentialRampToValueAtTime(.25, t + 3.5); g.gain.setValueAtTime(.25, t + 4); g.gain.exponentialRampToValueAtTime(.00001, t + 4.3);
+    o.connect(g).connect(out); o.start(t); o.stop(t + 4.4);
+  };
+  howl();
+  const howlT = setInterval(howl, 6500);
+  return { stop() { clearInterval(chordT); clearInterval(howlT); } };
+}
+
+// ---------- detection ----------
+const tracks = []; // live peak tracks
+let nextId = 1, t0 = 0, logList = [];
+const clamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
+const p2db = p => 10 * Math.log10(p + 1e-30);
+const db2p = db => Math.pow(10, db / 10);
+
+function analyse() {
+  const an = engine.analyser; if (!an) return;
+  an.getFloatFrequencyData(spec);
+  an.getFloatTimeDomainData(tbuf);
+  meter();
+  const now = (performance.now() - t0) / 1000;
+  const sr = engine.ctx.sampleRate, binHz = sr / an.fftSize, N = spec.length;
+  const kMin = Math.max(3, Math.ceil(+els.fmin.value / binHz)), kMax = Math.min(N - 4, Math.floor(+els.fmax.value / binHz));
+  const promTh = +els.prom.value, floorDb = +els.floor.value, holdS = +els.hold.value / 1000;
+
+  const peaks = [];
+  for (let k = kMin; k <= kMax; k++) {
+    const v = spec[k];
+    if (v < floorDb) continue;
+    if (!(v > spec[k - 1] && v >= spec[k + 1] && v > spec[k - 2] && v >= spec[k + 2])) continue;
+    // neighbourhood power (≈ ±1/6 octave), excluding the peak's own main lobe
+    const W = Math.max(10, Math.round(k * 0.06)), g = 4;
+    let s = 0, n = 0;
+    for (let j = Math.max(0, k - W); j <= Math.min(N - 1, k + W); j++) { if (Math.abs(j - k) <= g) continue; s += db2p(spec[j]); n++; }
+    const nb = p2db(s / Math.max(1, n));
+    const prom = v - nb;
+    if (prom < promTh) continue;
+    // parabolic interpolation for true frequency / level
+    const a = spec[k - 1], b = v, c = spec[k + 1], den = a - 2 * b + c;
+    const p = den !== 0 ? 0.5 * (a - c) / den : 0;
+    const f = (k + p) * binHz, lvl = b - 0.25 * (a - c) * p;
+    // harmonic check: strongest of 2f, 3f
+    let harm = -200;
+    for (const h of [2, 3]) {
+      const kh = Math.round((k + p) * h);
+      if (kh + 2 >= N) continue;
+      for (let j = kh - 2; j <= kh + 2; j++) if (spec[j] > harm) harm = spec[j];
+    }
+    peaks.push({ f, lvl, prom, phpr: lvl - harm });
+  }
+  peaks.sort((x, y) => y.lvl - x.lvl);
+  peaks.length = Math.min(peaks.length, 16);
+
+  // match peaks to tracks
+  const used = new Set();
+  for (const pk of peaks) {
+    let best = null, bd = 40;
+    for (const tr of tracks) { if (used.has(tr)) continue; const d = Math.abs(centsDiff(pk.f, tr.f)); if (d < bd) { bd = d; best = tr; } }
+    if (!best) { best = { id: nextId++, f: pk.f, start: now, hist: [], status: null, logged: null }; tracks.push(best); }
+    used.add(best);
+    best.f = best.f * 0.8 + pk.f * 0.2;
+    best.last = now; best.lvl = pk.lvl; best.prom = pk.prom; best.phpr = best.phpr == null ? pk.phpr : best.phpr * 0.8 + pk.phpr * 0.2;
+    best.hist.push([now, pk.lvl]);
+    while (best.hist.length && best.hist[0][0] < now - 1.5) best.hist.shift();
+  }
+  for (let i = tracks.length - 1; i >= 0; i--) if (now - tracks[i].last > 0.25) tracks.splice(i, 1);
+
+  // score
+  for (const tr of tracks) {
+    tr.dur = now - tr.start;
+    tr.slope = slope(tr.hist.filter(h => h[0] > now - 1));
+    const sP = clamp01((tr.prom - promTh + 4) / 12);
+    const sH = clamp01((tr.phpr - 6) / 18);
+    const sG = clamp01(0.5 + tr.slope / 20);
+    const sD = clamp01(tr.dur / holdS);
+    tr.score = sD * (0.45 * sP + 0.35 * sH + 0.2 * sG);
+    // strong harmonics (< 14 dB below the peak) = a voice or instrument, never logged
+    tr.status = tr.dur >= holdS && tr.phpr >= 14 ? (tr.score >= 0.72 ? "fb" : tr.score >= 0.5 ? "ring" : "watch") : "watch";
+    if ((tr.status === "fb" || tr.status === "ring") && !tr.logged) logHit(tr);
+    if (tr.logged) {
+      const e = tr.logged; e.maxDb = Math.max(e.maxDb, tr.lvl); e.last = Date.now();
+      if (tr.status === "fb") e.status = "fb";
+    }
+  }
+  wfRow();
+  renderLive();
+}
+function slope(h) {
+  if (h.length < 4) return 0;
+  let sx = 0, sy = 0, sxx = 0, sxy = 0; const n = h.length;
+  for (const [x, y] of h) { sx += x; sy += y; sxx += x * x; sxy += x * y; }
+  const d = n * sxx - sx * sx; return d ? (n * sxy - sx * sy) / d : 0;
+}
+function logHit(tr) {
+  let e = logList.find(x => Math.abs(centsDiff(tr.f, x.f)) < 50);
+  if (e) { e.hits++; e.f = (e.f * (e.hits - 1) + tr.f) / e.hits; }
+  else { e = { f: tr.f, hits: 1, maxDb: tr.lvl, status: tr.status, first: Date.now(), last: Date.now() }; logList.push(e); }
+  if (tr.status === "fb") e.status = "fb";
+  tr.logged = e;
+  renderLog();
+}
+
+// ---------- meter ----------
+let pkHold = -120, pkT = 0;
+function meter() {
+  let s = 0, pk = 0;
+  for (let i = 0; i < tbuf.length; i++) { const x = tbuf[i]; s += x * x; const a = Math.abs(x); if (a > pk) pk = a; }
+  const rms = 20 * Math.log10(Math.sqrt(s / tbuf.length) + 1e-12), pdb = 20 * Math.log10(pk + 1e-12);
+  const now = performance.now();
+  if (pdb > pkHold || now - pkT > 1500) { pkHold = pdb; pkT = now; }
+  const pos = db => Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + "%";
+  els.mRms.style.width = pos(rms); els.mPk.style.left = pos(pkHold);
+  els.mTxt.innerHTML = "";
+  els.mTxt.append("RMS " + rms.toFixed(1) + " · Pk " + pkHold.toFixed(1) + " dBFS");
+  if (pkHold > -1) { const c = document.createElement("span"); c.className = "clip"; c.textContent = " CLIP"; els.mTxt.append(c); }
+}
+
+// ---------- rendering: tables ----------
+const STATUS_LABEL = { fb: "FEEDBACK", ring: "RINGING", watch: "WATCH" };
+function td(text, cls) { const c = document.createElement("td"); c.textContent = text; if (cls) c.className = cls; return c; }
+function chip(st) { const c = document.createElement("td"); const s = document.createElement("span"); s.className = "chip " + st; s.textContent = STATUS_LABEL[st]; c.appendChild(s); return c; }
+function noteText(f) { const n = noteOf(f); return n.name + " " + (n.cents >= 0 ? "+" : "") + n.cents + "¢"; }
+let liveT = 0;
+function renderLive() {
+  const now = performance.now(); if (now - liveT < 150) return; liveT = now;
+  const rows = tracks.filter(t => t.dur > 0.08).sort((a, b) => b.score - a.score).slice(0, 8);
+  els.live.textContent = "";
+  for (const t of rows) {
+    const tr = document.createElement("tr");
+    tr.append(td(fmtHz(t.f), "f"), td(noteText(t.f)), td(t.lvl.toFixed(0) + " dB"), td(t.prom.toFixed(0) + " dB"),
+      td(t.dur.toFixed(1) + " s"), td((t.slope >= 0 ? "+" : "") + t.slope.toFixed(1) + " dB/s"), chip(t.status));
+    els.live.appendChild(tr);
+  }
+  els.liveEmpty.hidden = rows.length > 0;
+}
+function peqText(e) {
+  const q = e.hits >= 3 ? 16 : 10;
+  const cut = e.hits >= 3 ? "−6 dB" : "−3 dB";
+  return "Q" + q + " " + cut;
+}
+function renderLog() {
+  logList.sort((a, b) => (b.status === "fb") - (a.status === "fb") || b.hits - a.hits || b.maxDb - a.maxDb);
+  els.log.textContent = "";
+  for (const e of logList) {
+    const tr = document.createElement("tr");
+    const st = document.createElement("span"); st.className = "chip " + e.status; st.textContent = e.status === "fb" ? "FB" : "RING";
+    const fc = td(fmtHz(e.f) + " ", "f"); fc.appendChild(st);
+    const x = document.createElement("td"); const b = document.createElement("button"); b.className = "x"; b.textContent = "×"; b.title = "Remove"; b.setAttribute("aria-label", "Remove " + fmtHz(e.f));
+    b.onclick = () => { logList = logList.filter(y => y !== e); for (const t of tracks) if (t.logged === e) t.logged = null; renderLog(); };
+    x.appendChild(b);
+    tr.append(fc, td(noteText(e.f)), td(fmtBand(geqBand(e.f))), td(String(e.hits)), td(e.maxDb.toFixed(0) + " dBFS"), td(peqText(e)), x);
+    els.log.appendChild(tr);
+  }
+  els.logEmpty.hidden = logList.length > 0;
+}
+function csv() {
+  const rows = [["frequency_hz", "note", "cents", "geq_band_hz", "hits", "peak_dbfs", "status", "suggested_q", "suggested_cut_db", "first_seen", "last_seen"]];
+  for (const e of logList) {
+    const n = noteOf(e.f);
+    rows.push([e.f.toFixed(1), n.name, n.cents, geqBand(e.f), e.hits, e.maxDb.toFixed(1), e.status === "fb" ? "feedback" : "ringing",
+      e.hits >= 3 ? 16 : 10, e.hits >= 3 ? -6 : -3, new Date(e.first).toISOString(), new Date(e.last).toISOString()]);
+  }
+  return rows.map(r => r.join(",")).join("\n");
+}
+$("copy").onclick = async () => {
+  const text = csv();
+  try { await navigator.clipboard.writeText(text); setStatus("Log copied as CSV."); }
+  catch (_) { setStatus("Couldn't reach the clipboard. Use Save CSV instead.", true); }
+};
+$("save").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv()], { type: "text/csv" }));
+  a.download = "feedback-log-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-") + ".csv";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+$("clear").onclick = () => { logList = []; for (const t of tracks) t.logged = null; renderLog(); };
+
+// ---------- rendering: canvases ----------
+const DB_MIN = -130, DB_MAX = 0;
+function fitCanvas(c) {
+  const r = c.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; return true; }
+  return false;
+}
+const xOf = (f, w) => { const lo = Math.log10(+els.fmin.value || 20), hi = Math.log10(+els.fmax.value || 20000); return (Math.log10(f) - lo) / (hi - lo) * w; };
+const fOf = (x, w) => { const lo = Math.log10(+els.fmin.value || 20), hi = Math.log10(+els.fmax.value || 20000); return Math.pow(10, lo + x / w * (hi - lo)); };
+
+let holdTrace = null;
+function draw() {
+  engine.raf = requestAnimationFrame(draw);
+  const c = els.spec; fitCanvas(c);
+  const g = c.getContext("2d"), W = c.width, H = c.height, dpr = W / c.getBoundingClientRect().width;
+  const padB = 18 * dpr, padL = 34 * dpr, pw = W - padL, ph = H - padB;
+  g.clearRect(0, 0, W, H);
+  g.font = (10 * dpr) + "px " + css("--mono");
+  // grid
+  g.strokeStyle = COL.line; g.fillStyle = COL.muted; g.lineWidth = 1;
+  for (let db = -120; db <= 0; db += 20) {
+    const y = (DB_MAX - db) / (DB_MAX - DB_MIN) * ph;
+    g.beginPath(); g.moveTo(padL, y); g.lineTo(W, y); g.stroke();
+    g.textAlign = "right"; g.textBaseline = "middle"; g.fillText(String(db), padL - 4 * dpr, Math.min(ph - 6 * dpr, Math.max(6 * dpr, y)));
+  }
+  g.textAlign = "center"; g.textBaseline = "top";
+  for (const f of [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]) {
+    if (f < +els.fmin.value || f > +els.fmax.value) continue;
+    const x = padL + xOf(f, pw);
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, ph); g.stroke();
+    g.fillText(f >= 1000 ? f / 1000 + "k" : String(f), x, ph + 4 * dpr);
+  }
+  // prominence floor line
+  if (!engine.analyser || !spec) return;
+  const binHz = engine.ctx.sampleRate / engine.analyser.fftSize;
+  const yOf = db => (DB_MAX - Math.max(DB_MIN, Math.min(DB_MAX, db))) / (DB_MAX - DB_MIN) * ph;
+  // per-pixel max of spectrum
+  const cols = Math.floor(pw);
+  const col = new Float32Array(cols).fill(-200);
+  for (let x = 0; x < cols; x++) {
+    const k0 = Math.floor(fOf(x, pw) / binHz), k1 = Math.max(k0, Math.floor(fOf(x + 1, pw) / binHz));
+    let m = -200;
+    for (let k = k0; k <= k1 && k < spec.length; k++) if (spec[k] > m) m = spec[k];
+    col[x] = m;
+  }
+  if (!holdTrace || holdTrace.length !== cols) holdTrace = col.slice();
+  for (let x = 0; x < cols; x++) holdTrace[x] = Math.max(col[x], holdTrace[x] - 0.4);
+  g.strokeStyle = "rgba(135,150,163,.45)"; g.beginPath();
+  for (let x = 0; x < cols; x++) { const y = yOf(holdTrace[x]); x ? g.lineTo(padL + x, y) : g.moveTo(padL + x, y); } g.stroke();
+  // live trace with fill
+  g.beginPath();
+  for (let x = 0; x < cols; x++) { const y = yOf(col[x]); x ? g.lineTo(padL + x, y) : g.moveTo(padL + x, y); }
+  g.strokeStyle = COL.trace; g.lineWidth = 1.25 * dpr; g.stroke();
+  g.lineTo(padL + cols, ph); g.lineTo(padL, ph); g.closePath();
+  g.fillStyle = "rgba(108,196,224,.10)"; g.fill();
+  // floor
+  g.setLineDash([4 * dpr, 4 * dpr]); g.strokeStyle = "rgba(242,169,59,.35)"; g.lineWidth = 1;
+  const yf = yOf(+els.floor.value); g.beginPath(); g.moveTo(padL, yf); g.lineTo(W, yf); g.stroke(); g.setLineDash([]);
+  // markers
+  g.textBaseline = "bottom";
+  for (const t of tracks) {
+    if (t.status === "watch" && t.dur < 0.2) continue;
+    const x = padL + xOf(t.f, pw), y = yOf(t.lvl);
+    const c2 = t.status === "fb" ? COL.fb : t.status === "ring" ? COL.ring : COL.trace;
+    g.strokeStyle = c2; g.fillStyle = c2; g.lineWidth = (t.status === "watch" ? 1 : 2) * dpr;
+    g.beginPath(); g.moveTo(x, ph); g.lineTo(x, y); g.stroke();
+    g.beginPath(); g.arc(x, y, 3 * dpr, 0, 7); g.fill();
+    if (t.status !== "watch") { g.font = "600 " + (11 * dpr) + "px " + css("--mono"); g.textAlign = x > W - 60 * dpr ? "right" : "center"; g.fillText(fmtHz(t.f), x, y - 5 * dpr); g.font = (10 * dpr) + "px " + css("--mono"); }
+  }
+}
+
+// waterfall: a new row each analysis frame
+function heat(v) { // v 0..1 -> dark blue-grey -> cyan -> amber -> red
+  const stops = [[15, 20, 24], [30, 70, 100], [108, 196, 224], [242, 169, 59], [255, 90, 79]];
+  const s = Math.max(0, Math.min(.9999, v)) * (stops.length - 1), i = Math.floor(s), f = s - i;
+  const a = stops[i], b = stops[i + 1]; return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+function wfRow() {
+  const c = els.wf; const resized = fitCanvas(c);
+  const g = c.getContext("2d"), W = c.width, H = c.height;
+  if (resized) { g.fillStyle = css("--bg"); g.fillRect(0, 0, W, H); }
+  const dpr = W / c.getBoundingClientRect().width, padL = 34 * dpr, pw = W - padL;
+  const rowH = Math.max(1, Math.round(dpr));
+  g.drawImage(c, 0, 0, W, H - rowH, 0, rowH, W, H - rowH);
+  const img = g.createImageData(W, rowH);
+  const binHz = engine.ctx.sampleRate / engine.analyser.fftSize;
+  for (let x = 0; x < Math.floor(pw); x++) {
+    const k0 = Math.floor(fOf(x, pw) / binHz), k1 = Math.max(k0, Math.floor(fOf(x + 1, pw) / binHz));
+    let m = -200; for (let k = k0; k <= k1 && k < spec.length; k++) if (spec[k] > m) m = spec[k];
+    const rgb = heat(Math.pow(Math.max(0, (m + 95) / 85), 1.6));
+    for (let r = 0; r < rowH; r++) { const o = (r * W + Math.round(padL) + x) * 4; img.data[o] = rgb[0]; img.data[o + 1] = rgb[1]; img.data[o + 2] = rgb[2]; img.data[o + 3] = 255; }
+  }
+  g.putImageData(img, 0, 0);
+}
+
+// ---------- boot ----------
+loadSettings(); syncOutputs(); renderLog(); renderLive();
+listDevices().catch(() => {});
+draw(); cancelAnimationFrame(engine.raf);
+window.addEventListener("resize", () => { if (!engine.running) draw(), cancelAnimationFrame(engine.raf); });
+window.__ff = { tracks, get log() { return logList; } }; // for testing
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Room Tuning</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: audio strip on top; response chart left; measure → correct → desk panels right, in working order. */
+:root {
+  --bg: #0f1418;
+  --panel: #161d23;
+  --line: #26313a;
+  --fg: #dce4ea;
+  --muted: #8796a3;
+  --accent: #f2a93b;   /* amber: EQ / actions */
+  --trace: #6cc4e0;    /* measured response */
+  --pred: #57c48a;     /* predicted with EQ */
+  --verify: #c792ea;   /* measured with EQ */
+  --bad: #ff5a4f;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); }
+body { padding: 16px max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); }
+h1 { font: 600 18px/1.2 var(--mono); letter-spacing: .04em; margin: 0; text-transform: uppercase; }
+h1 span { color: var(--accent); }
+h2 { font: 600 12px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 0; }
+h2 b { color: var(--accent); font-weight: 600; margin-right: 6px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; margin-bottom: 14px; }
+header p { margin: 0; color: var(--muted); max-width: 70ch; flex: 1 1 320px; }
+nav { display: flex; gap: 4px; }
+nav a { font: 600 12px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); text-decoration: none; padding: 6px 10px; border-radius: 4px; border: 1px solid transparent; }
+nav a[aria-current="page"] { color: var(--fg); border-color: var(--line); background: var(--panel); }
+nav a:hover { color: var(--fg); }
+
+.strip { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: flex-end; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; margin-bottom: 14px; }
+.strip .sep { width: 1px; align-self: stretch; background: var(--line); }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field > label, .lbl { font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.field output { font: 500 12px var(--mono); color: var(--fg); }
+select, input[type=number], input[type=text] { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; font: 13px var(--sans); max-width: 240px; }
+input[type=number] { width: 84px; font-family: var(--mono); }
+input[type=text] { font-family: var(--mono); width: 150px; }
+input[type=range] { accent-color: var(--accent); width: 130px; }
+input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
+button { font: 600 12px var(--mono); letter-spacing: .06em; text-transform: uppercase; border-radius: 4px; padding: 8px 14px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); color: #1b1305; border-color: var(--accent); }
+button.live { background: var(--bad); border-color: var(--bad); color: #fff; }
+button.small { padding: 4px 8px; font-size: 11px; }
+.row { display: flex; gap: 8px 12px; flex-wrap: wrap; align-items: center; }
+
+.meter { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
+.meterbar { position: relative; height: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
+.meterbar i { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--pred) 0 70%, var(--accent) 70% 90%, var(--bad) 90%); }
+.meterbar b { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg); left: 0; }
+.meter output { font: 12px var(--mono); font-variant-numeric: tabular-nums; }
+.clip { color: var(--bad); font-weight: 600; }
+
+.grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 1040px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+canvas { display: block; width: 100%; background: var(--bg); border-radius: 4px; }
+#chart { height: 440px; }
+@media (max-width: 600px) { #chart { height: 320px; } }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font: 12px var(--mono); }
+.legend label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--muted); }
+.legend label:has(input:checked) { color: var(--fg); }
+.sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.status { font: 12px var(--mono); color: var(--muted); }
+.status.err { color: var(--bad); }
+.status.ok { color: var(--pred); }
+.note { color: var(--muted); font-size: 13px; margin: 0; max-width: 70ch; }
+
+.prog { height: 6px; background: var(--bg); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.prog i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
+ul.caps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+ul.caps li { display: flex; align-items: center; gap: 8px; font: 12.5px var(--mono); padding: 6px 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
+ul.caps li .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+ul.caps li b { font-weight: 600; color: var(--fg); }
+.tag { font: 600 10.5px var(--mono); letter-spacing: .05em; padding: 1px 6px; border-radius: 3px; }
+.tag.raw { color: var(--trace); background: color-mix(in srgb, var(--trace) 16%, transparent); }
+.tag.verify { color: var(--verify); background: color-mix(in srgb, var(--verify) 18%, transparent); }
+.x { background: none; border: none; color: var(--muted); padding: 2px 6px; cursor: pointer; font-size: 14px; }
+.x:hover { color: var(--bad); }
+
+table { width: 100%; border-collapse: collapse; font: 12.5px var(--mono); font-variant-numeric: tabular-nums; }
+th { text-align: left; font-weight: 500; color: var(--muted); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; padding: 4px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td.num { font-weight: 600; }
+td.dim, .dim { color: var(--muted); }
+.cut { color: var(--trace); } .boost { color: var(--accent); }
+.scroll { overflow-x: auto; }
+.geq { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 4px; }
+.geq div { background: var(--bg); border: 1px solid var(--line); border-radius: 3px; padding: 4px 5px; font: 11.5px var(--mono); display: flex; flex-direction: column; }
+.geq div span:first-child { color: var(--muted); font-size: 10.5px; }
+.stats { display: flex; gap: 18px; flex-wrap: wrap; }
+.stat { display: flex; flex-direction: column; }
+.stat strong { font: 600 20px var(--mono); font-variant-numeric: tabular-nums; }
+.stat span { font: 11px var(--mono); color: var(--muted); letter-spacing: .05em; text-transform: uppercase; }
+.bands { display: flex; gap: 8px; flex-wrap: wrap; font: 12px var(--mono); }
+.bands label { display: flex; gap: 4px; align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.seg label { padding: 6px 10px; font: 600 11px var(--mono); letter-spacing: .05em; text-transform: uppercase; cursor: pointer; color: var(--muted); }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label:has(input:checked) { background: var(--accent); color: #1b1305; }
+.seg label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+details { color: var(--muted); font-size: 13px; }
+details summary { cursor: pointer; color: var(--fg); }
+details li, details p { max-width: 75ch; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Room <span>Tuning</span></h1>
+  <nav aria-label="Tools"><a href="room-tuning.html" aria-current="page">Room tuning</a><a href="feedback-finder.html">Feedback finder</a></nav>
+  <p>Play pink noise through the PA, measure it at the reference mic, and compare against the noise that was sent. The difference is what the room and system add. The tool fits the X32 Main LR EQ to correct it.</p>
+</header>
+
+<section class="strip" aria-label="Audio">
+  <div class="field"><label for="outDev">Noise out to</label><select id="outDev"><option value="">Default output</option></select></div>
+  <div class="field"><label for="outCh">Out channels</label><select id="outCh"><option value="0,1">1+2</option></select></div>
+  <div class="field"><label for="level">Noise level <output id="levelOut">−30 dBFS</output></label><input type="range" id="level" min="-60" max="-12" step="1" value="-30"></div>
+  <button id="play" class="primary">Play pink noise</button>
+  <div class="sep" aria-hidden="true"></div>
+  <div class="field"><label for="inDev">Reference mic</label><select id="inDev"><option value="">Default input</option></select></div>
+  <div class="field"><label for="inCh">Channel</label><select id="inCh"><option value="0">1</option></select></div>
+  <div class="meter"><span class="lbl">Mic level</span><div class="meterbar"><i id="mRms"></i><b id="mPk"></b></div><output id="mTxt">— dBFS</output></div>
+  <span class="status" id="astat">Audio is off. Press Play or Measure to start.</span>
+</section>
+
+<div class="grid">
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Frequency response</h2>
+      <div class="row">
+        <div class="field" style="flex-direction:row;align-items:center;gap:6px"><label for="smooth">Smoothing</label>
+          <select id="smooth"><option value="3">1/3 oct</option><option value="6" selected>1/6 oct</option><option value="12">1/12 oct</option><option value="24">1/24 oct</option></select></div>
+        <button class="small" id="report" disabled>Save CSV</button>
+      </div>
+    </div>
+    <canvas id="chart" aria-label="Frequency response chart: measured response, target, proposed EQ and predicted result"></canvas>
+    <div class="legend" id="legend">
+      <label><input type="checkbox" id="lg-live" checked><span class="sw" style="background:var(--fg)"></span>Live</label>
+      <label><input type="checkbox" id="lg-pos" checked><span class="sw" style="background:var(--muted)"></span>Each position</label>
+      <label><input type="checkbox" id="lg-avg" checked><span class="sw" style="background:var(--trace)"></span>Room, no EQ (average)</label>
+      <label><input type="checkbox" id="lg-tgt" checked><span class="sw" style="background:repeating-linear-gradient(90deg,var(--fg) 0 4px,transparent 4px 7px)"></span>Target</label>
+      <label><input type="checkbox" id="lg-eq" checked><span class="sw" style="background:var(--accent)"></span>Proposed EQ</label>
+      <label><input type="checkbox" id="lg-pred" checked><span class="sw" style="background:var(--pred)"></span>Predicted with EQ</label>
+      <label><input type="checkbox" id="lg-ver" checked><span class="sw" style="background:var(--verify)"></span>Measured with EQ</label>
+    </div>
+  </section>
+
+  <div class="col">
+    <section class="panel">
+      <div class="panel-head"><h2><b>1</b>Measure</h2><span class="status" id="mstat"></span></div>
+      <div class="row">
+        <div class="field"><label for="mmode">Desk EQ during measurement</label>
+          <select id="mmode">
+            <option value="raw">Bypassed: measure the room</option>
+            <option value="verify">As it is now: check the result</option>
+          </select></div>
+        <button id="measure" class="primary">Measure position</button>
+      </div>
+      <div class="prog" aria-hidden="true"><i id="mprog"></i></div>
+      <p class="note" id="mhint">Measure 3–5 mic positions across the audience area for an average the whole room will hear.</p>
+      <ul class="caps" id="caps"></ul>
+      <div class="row">
+        <div class="field"><label for="cal">Mic calibration file (optional)</label><input type="file" id="cal" accept=".txt,.cal,.frd,.csv"></div>
+        <span class="status" id="calName">No calibration loaded</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2><b>2</b>Target and correction</h2></div>
+      <div class="row">
+        <div class="field"><label for="tpreset">Target</label>
+          <select id="tpreset"><option value="flat">Flat</option><option value="house" selected>House curve</option><option value="speech">Speech</option><option value="custom">Custom</option></select></div>
+        <div class="field"><label for="tlow">Lows below 100 Hz <output id="tlowOut"></output></label><input type="range" id="tlow" min="0" max="8" step="0.5" value="3"></div>
+        <div class="field"><label for="thigh">Tilt to 16 kHz <output id="thighOut"></output></label><input type="range" id="thigh" min="-8" max="0" step="0.5" value="-3"></div>
+      </div>
+      <div class="row">
+        <div class="seg" role="radiogroup" aria-label="Which desk EQ to use">
+          <label><input type="radio" name="cmode" id="cm-peq" value="peq" checked>Main LR PEQ</label>
+          <label><input type="radio" name="cmode" id="cm-geq" value="geq">GEQ insert</label>
+        </div>
+        <div class="field" id="peqBandsWrap"><span class="lbl">Bands it may use</span>
+          <div class="bands" id="peqBands"></div></div>
+        <div class="field" id="geqSlotWrap" hidden><label for="geqSlot">GEQ in FX slot</label>
+          <select id="geqSlot"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="flo">Correct from / to Hz</label>
+          <div class="row"><input type="number" id="flo" value="60" min="20" max="2000" aria-label="Lowest frequency to correct"><input type="number" id="fhi" value="12000" min="1000" max="20000" aria-label="Highest frequency to correct"></div></div>
+        <div class="field"><label for="boost">Max boost <output id="boostOut"></output></label><input type="range" id="boost" min="0" max="6" step="0.5" value="3"></div>
+        <div class="field"><label for="cut">Max cut <output id="cutOut"></output></label><input type="range" id="cut" min="3" max="15" step="1" value="12"></div>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="scroll" id="eqTableWrap"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2><b>3</b>X32 Compact</h2><span class="status" id="bstat">Checking for the bridge…</span></div>
+      <div class="row">
+        <div class="field"><label for="xip">Desk IP address</label><input type="text" id="xip" placeholder="192.168.1.20" inputmode="decimal" autocomplete="off"></div>
+        <button id="xconnect">Connect</button>
+        <button id="xread" disabled>Read EQ</button>
+      </div>
+      <div class="row">
+        <button id="xapply" class="primary" disabled>Send EQ to desk</button>
+        <button id="xundo" disabled>Undo last send</button>
+      </div>
+      <span class="status" id="xstat">Not connected. You can still measure and enter the EQ by hand.</span>
+      <details>
+        <summary>Setting up</summary>
+        <ul>
+          <li>Run <code>python x32_bridge.py</code> in this folder and use the page it opens (http://localhost:8032). Browsers can't talk to the desk directly; the bridge passes the messages on.</li>
+          <li>The laptop and the X32 must be on the same network. Find the desk's IP under Setup › Network.</li>
+          <li>Noise path: send the noise into one desk channel (for example a USB card return), with that channel's EQ and dynamics flat, assigned to Main LR at unity.</li>
+          <li>Mic path: set the reference mic's preamp so the meter sits around −20 dBFS with the noise playing. If the X32 is your USB interface, route the mic's channel to a card output and pick that channel here.</li>
+          <li>Graphic EQ mode needs a GEQ or TruEQ already inserted on Main LR (Effects slot, then Main LR › Insert).</li>
+        </ul>
+      </details>
+    </section>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C = { trace: css("--trace"), pred: css("--pred"), verify: css("--verify"), accent: css("--accent"), fg: css("--fg"), muted: css("--muted"), line: css("--line"), bad: css("--bad"), bg: css("--bg") };
+const els = new Proxy({}, { get: (_, k) => $(k) });
+const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const dbp = p => 10 * Math.log10(Math.max(p, 1e-30));
+
+// ---------------------------------------------------------------- constants
+const FFT_SIZE = 32768;
+const DESK_FS = 48000;
+const GRID = (() => { const a = []; for (let i = 0; ; i++) { const f = 20 * Math.pow(2, i / 48); if (f > 20000.5) break; a.push(f); } return Float64Array.from(a); })();
+const NG = GRID.length;
+const COS1 = GRID.map(f => Math.cos(2 * Math.PI * f / DESK_FS));
+const COS2 = GRID.map(f => Math.cos(4 * Math.PI * f / DESK_FS));
+const GEQ_F = [20,25,31.5,40,50,63,80,100,125,160,200,250,315,400,500,630,800,1000,1250,1600,2000,2500,3150,4000,5000,6300,8000,10000,12500,16000,20000];
+const PEQ_TYPES = ["Low cut", "Low shelf", "PEQ", "Vintage EQ", "High shelf", "High cut"];
+const GEQ_FX_TYPES = { 27: "Dual GEQ", 28: "Stereo GEQ", 29: "Dual TruEQ", 30: "Stereo TruEQ" };
+const DEFAULT_BAND_F = [80, 200, 600, 2000, 6000, 12000];
+const fmtHz = f => f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 1 : 2).replace(/\.?0+$/, "") + "k" : f.toFixed(f < 100 ? 1 : 0).replace(/\.0$/, "");
+const fmtDb = g => (g > 0 ? "+" : g < 0 ? "−" : "") + Math.abs(g).toFixed(Math.abs(g) % 1 ? (Math.abs(g * 4) % 2 ? 2 : 1) : 1);
+
+// X32 parameter scales (OSC floats 0..1)
+const X32 = {
+  fToV: f => Math.round(Math.log(clamp(f, 20, 20000) / 20) / Math.log(1000) * 200) / 200,
+  vToF: v => 20 * Math.pow(1000, v),
+  gToV: g => Math.round((clamp(g, -15, 15) + 15) / 30 * 120) / 120,
+  vToG: v => v * 30 - 15,
+  qToV: q => Math.round(Math.log(clamp(q, 0.3, 10) / 10) / Math.log(0.03) * 71) / 71,
+  vToQ: v => 10 * Math.pow(0.03, v),
+};
+const snapBand = b => ({ ...b, f: X32.vToF(X32.fToV(b.f)), g: X32.vToG(X32.gToV(b.g)), q: X32.vToQ(X32.qToV(b.q)) });
+
+// ---------------------------------------------------------------- settings
+const SKEY = "room-tuning-settings";
+const SAVED = ["outDev", "outCh", "level", "inDev", "inCh", "smooth", "mmode", "tpreset", "tlow", "thigh", "flo", "fhi", "boost", "cut", "geqSlot", "xip"];
+function saveSettings() {
+  try {
+    const s = {}; for (const k of SAVED) s[k] = els[k].value;
+    s.cmode = cmode(); s.bands = peqSel();
+    localStorage.setItem(SKEY, JSON.stringify(s));
+  } catch (_) {}
+}
+let want = {};
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SKEY) || "null"); if (!s) return;
+    want = s;
+    for (const k of SAVED) if (s[k] != null && !["outDev", "outCh", "inDev", "inCh"].includes(k)) els[k].value = s[k];
+    if (s.cmode === "geq") $("cm-geq").checked = true;
+  } catch (_) {}
+}
+
+// ---------------------------------------------------------------- DSP helpers
+function fft(re, im, inverse) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit;
+    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = 2 * Math.PI / len * (inverse ? 1 : -1), half = len >> 1;
+    for (let j = 0; j < half; j++) {
+      const wr = Math.cos(ang * j), wi = Math.sin(ang * j);
+      for (let i = j; i < n; i += len) {
+        const k = i + half, vr = re[k] * wr - im[k] * wi, vi = re[k] * wi + im[k] * wr;
+        re[k] = re[i] - vr; im[k] = im[i] - vi; re[i] += vr; im[i] += vi;
+      }
+    }
+  }
+}
+// Periodic pink noise: exact 1/f power spectrum, 20 Hz–20 kHz, random phase, loops seamlessly.
+function makePink(ctx) {
+  const N = 1 << 18, sr = ctx.sampleRate, re = new Float64Array(N), im = new Float64Array(N);
+  for (let k = 1; k < N / 2; k++) {
+    const f = k * sr / N; if (f < 20 || f > 20000) continue;
+    const m = 1 / Math.sqrt(f), ph = Math.random() * 2 * Math.PI;
+    re[k] = m * Math.cos(ph); im[k] = m * Math.sin(ph); re[N - k] = re[k]; im[N - k] = -im[k];
+  }
+  fft(re, im, true);
+  let s = 0; for (let i = 0; i < N; i++) s += re[i] * re[i];
+  const scale = 0.1 / Math.sqrt(s / N); // −20 dBFS RMS
+  const buf = ctx.createBuffer(1, N, sr), d = buf.getChannelData(0);
+  for (let i = 0; i < N; i++) d[i] = re[i] * scale;
+  return buf;
+}
+const prefixCache = new WeakMap();
+function prefix(pow, fresh) {
+  let p = fresh ? null : prefixCache.get(pow);
+  if (!p) { p = new Float64Array(pow.length + 1); for (let k = 0; k < pow.length; k++) p[k + 1] = p[k] + pow[k]; if (!fresh) prefixCache.set(pow, p); }
+  return p;
+}
+function smooth(pow, binHz, S, fresh) {
+  const p = prefix(pow, fresh), out = new Float64Array(NG), h = Math.pow(2, 1 / (2 * S)), n = pow.length;
+  for (let i = 0; i < NG; i++) {
+    const fc = GRID[i];
+    let a = Math.ceil(fc / h / binHz), b = Math.floor(fc * h / binHz);
+    if (b < a) a = b = Math.round(fc / binHz);
+    a = clamp(a, 1, n - 1); b = clamp(b, a, n - 1);
+    out[i] = (p[b + 1] - p[a]) / (b - a + 1);
+  }
+  return out;
+}
+// RBJ biquads, evaluated at 48 kHz to model the desk
+function biquad(type, f, g, q) {
+  const w = 2 * Math.PI * f / DESK_FS, cw = Math.cos(w), al = Math.sin(w) / (2 * q), A = Math.pow(10, g / 40), sA = Math.sqrt(A);
+  switch (type) {
+    case 0: { const a = Math.sin(w) / (2 * 0.707); return [(1 + cw) / 2, -(1 + cw), (1 + cw) / 2, 1 + a, -2 * cw, 1 - a]; }
+    case 5: { const a = Math.sin(w) / (2 * 0.707); return [(1 - cw) / 2, 1 - cw, (1 - cw) / 2, 1 + a, -2 * cw, 1 - a]; }
+    case 1: return [A * ((A + 1) - (A - 1) * cw + 2 * sA * al), 2 * A * ((A - 1) - (A + 1) * cw), A * ((A + 1) - (A - 1) * cw - 2 * sA * al),
+                    (A + 1) + (A - 1) * cw + 2 * sA * al, -2 * ((A - 1) + (A + 1) * cw), (A + 1) + (A - 1) * cw - 2 * sA * al];
+    case 4: return [A * ((A + 1) + (A - 1) * cw + 2 * sA * al), -2 * A * ((A - 1) + (A + 1) * cw), A * ((A + 1) + (A - 1) * cw - 2 * sA * al),
+                    (A + 1) - (A - 1) * cw + 2 * sA * al, 2 * ((A - 1) - (A + 1) * cw), (A + 1) - (A - 1) * cw - 2 * sA * al];
+    default: return [1 + al * A, -2 * cw, 1 - al * A, 1 + al / A, -2 * cw, 1 - al / A];
+  }
+}
+function addFilter(out, type, f, g, q) {
+  if ((type === 2 || type === 3 || type === 1 || type === 4) && Math.abs(g) < 0.01) return;
+  const [b0, b1, b2, a0, a1, a2] = biquad(type, f, g, q);
+  const nb = b0 * b0 + b1 * b1 + b2 * b2, na = a0 * a0 + a1 * a1 + a2 * a2, nb1 = 2 * (b0 * b1 + b1 * b2), na1 = 2 * (a0 * a1 + a1 * a2), nb2 = 2 * b0 * b2, na2 = 2 * a0 * a2;
+  for (let i = 0; i < NG; i++) {
+    const n = nb + nb1 * COS1[i] + nb2 * COS2[i], d = na + na1 * COS1[i] + na2 * COS2[i];
+    out[i] += 10 * Math.log10(Math.max(n, 1e-30) / Math.max(d, 1e-30));
+  }
+}
+const GEQ_Q = 4.32; // ≈ 1/3-octave band
+function geqCurve(gains) { const out = new Float64Array(NG); gains.forEach((g, k) => addFilter(out, 2, GEQ_F[k], g, GEQ_Q)); return out; }
+// desk state → response curve; ex = { bands:Set of band indices to leave out, peq:bool, geq:bool }
+function deskCurve(st, ex = {}) {
+  const out = new Float64Array(NG); if (!st) return out;
+  if (st.peqOn && !ex.peq) st.bands.forEach((b, i) => { if (!(ex.bands && ex.bands.has(i))) addFilter(out, b.type, b.f, b.g, b.q); });
+  if (st.insertOn && st.geq && !ex.geq) { const g = geqCurve(st.geq); for (let i = 0; i < NG; i++) out[i] += g[i]; }
+  return out;
+}
+
+// ---------------------------------------------------------------- audio
+const A = { ctx: null, outN: 2, merger: null, src: null, noiseGain: null, refAn: null, micAn: null, stream: null, inSrc: null, splitter: null, inN: 1, playing: false, timer: 0, live: null };
+let micDb, refDb, tbuf;
+function setA(t, cls) { els.astat.textContent = t; els.astat.className = "status" + (cls ? " " + cls : ""); }
+function mkAnalyser() { const a = A.ctx.createAnalyser(); a.fftSize = FFT_SIZE; a.smoothingTimeConstant = 0; a.minDecibels = -160; a.maxDecibels = 0; return a; }
+const levelGain = () => Math.pow(10, (+els.level.value + 20) / 20);
+
+async function ensureAudio() {
+  if (A.ctx) return true;
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("This browser can't open audio inputs here. Use Chrome or Edge, opened through the bridge (http://localhost:8032).");
+    A.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "playback" });
+    await A.ctx.resume();
+    A.refAn = mkAnalyser(); A.micAn = mkAnalyser();
+    micDb = new Float32Array(FFT_SIZE / 2); refDb = new Float32Array(FFT_SIZE / 2); tbuf = new Float32Array(FFT_SIZE);
+    A.src = A.ctx.createBufferSource(); A.src.buffer = makePink(A.ctx); A.src.loop = true;
+    A.noiseGain = A.ctx.createGain(); A.noiseGain.gain.value = 0;
+    A.src.connect(A.refAn); A.src.start();
+    await openInput();
+    await applySink();
+    A.timer = setInterval(tick, 100);
+    return true;
+  } catch (e) {
+    await closeAudio();
+    const msg = e?.name === "NotAllowedError" ? "Microphone access was blocked. Allow it from the browser's address bar, then try again."
+      : e?.name === "OverconstrainedError" ? "That input isn't available. Pick another reference mic input."
+      : e?.message || String(e);
+    setA(msg, "err");
+    return false;
+  }
+}
+async function closeAudio() {
+  clearInterval(A.timer);
+  if (A.stream) A.stream.getTracks().forEach(t => t.stop());
+  if (A.ctx) try { await A.ctx.close(); } catch (_) {}
+  Object.assign(A, { ctx: null, merger: null, src: null, noiseGain: null, stream: null, inSrc: null, splitter: null, playing: false, live: null });
+  updatePlay();
+}
+async function applySink() {
+  const id = els.outDev.value;
+  if (A.ctx.setSinkId) {
+    try { await A.ctx.setSinkId(id || ""); }
+    catch (e) { setA("Couldn't use that output: " + e.message, "err"); }
+  } else if (id) setA("This browser only plays to the system default output. Set your interface as the default, or use Chrome or Edge.", "err");
+  configureOutputs();
+}
+function configureOutputs() {
+  const ctx = A.ctx, n = clamp(ctx.destination.maxChannelCount || 2, 1, 32);
+  A.outN = n;
+  try { ctx.destination.channelCount = n; ctx.destination.channelCountMode = "explicit"; ctx.destination.channelInterpretation = "discrete"; } catch (_) {}
+  try { A.noiseGain.disconnect(); } catch (_) {}
+  try { A.merger && A.merger.disconnect(); } catch (_) {}
+  A.merger = ctx.createChannelMerger(n); A.merger.connect(ctx.destination);
+  fillOutChannels(n);
+  A.src.connect(A.noiseGain);
+  for (const c of els.outCh.value.split(",").map(Number)) if (c < n) A.noiseGain.connect(A.merger, 0, c);
+}
+function fillOutChannels(n) {
+  const cur = els.outCh.value || want.outCh || "0,1";
+  els.outCh.textContent = "";
+  const add = (v, t) => { const o = document.createElement("option"); o.value = v; o.textContent = t; els.outCh.appendChild(o); };
+  for (let i = 0; i + 1 < n; i += 2) add(i + "," + (i + 1), (i + 1) + "+" + (i + 2));
+  for (let i = 0; i < n; i++) add(String(i), String(i + 1));
+  els.outCh.value = [...els.outCh.options].some(o => o.value === cur) ? cur : els.outCh.options[0].value;
+}
+async function openInput() {
+  if (A.stream) A.stream.getTracks().forEach(t => t.stop());
+  try { A.inSrc && A.inSrc.disconnect(); } catch (_) {}
+  const id = els.inDev.value || want.inDev || "";
+  try {
+    A.stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: id ? { exact: id } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 32 } } });
+  } catch (e) {
+    if (id && e?.name === "OverconstrainedError") A.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    else throw e;
+  }
+  const tr = A.stream.getAudioTracks()[0], n = clamp(tr.getSettings().channelCount || 1, 1, 32);
+  A.inN = n;
+  A.inSrc = A.ctx.createMediaStreamSource(A.stream); A.inSrc.channelCountMode = "explicit"; A.inSrc.channelCount = n;
+  A.splitter = A.ctx.createChannelSplitter(n); A.inSrc.connect(A.splitter);
+  const cur = els.inCh.value !== "" && els.inCh.options.length > 1 ? els.inCh.value : (want.inCh || "0");
+  els.inCh.textContent = "";
+  for (let i = 0; i < n; i++) { const o = document.createElement("option"); o.value = i; o.textContent = String(i + 1); els.inCh.appendChild(o); }
+  els.inCh.value = +cur < n ? cur : "0";
+  wireInput();
+  await listDevices();
+  setA("Mic: " + (tr.label || "input") + " · ch " + (+els.inCh.value + 1) + "/" + n + " · " + A.ctx.sampleRate + " Hz", "ok");
+}
+function wireInput() { try { A.splitter.disconnect(); } catch (_) {} A.splitter.connect(A.micAn, Math.min(+els.inCh.value, A.inN - 1), 0); }
+async function listDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  const devs = await navigator.mediaDevices.enumerateDevices();
+  for (const [sel, kind, def, key] of [[els.inDev, "audioinput", "Default input", "inDev"], [els.outDev, "audiooutput", "Default output", "outDev"]]) {
+    const cur = sel.value || want[key] || "";
+    sel.textContent = "";
+    const o0 = document.createElement("option"); o0.value = ""; o0.textContent = def; sel.appendChild(o0);
+    devs.filter(d => d.kind === kind && d.deviceId && d.deviceId !== "default").forEach((d, i) => {
+      const o = document.createElement("option"); o.value = d.deviceId; o.textContent = d.label || (kind === "audioinput" ? "Input " : "Output ") + (i + 1); sel.appendChild(o);
+    });
+    if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+  }
+}
+function rampNoise(g) { if (A.noiseGain) A.noiseGain.gain.setTargetAtTime(g, A.ctx.currentTime, 0.12); }
+async function setNoise(on) {
+  if (on && !(await ensureAudio())) return;
+  if (!A.ctx) return;
+  A.playing = on; rampNoise(on ? levelGain() : 0);
+  if (!on) A.live = null;
+  updatePlay();
+}
+function updatePlay() { els.play.textContent = A.playing ? "Stop noise" : "Play pink noise"; els.play.className = A.playing ? "live" : "primary"; }
+
+// meter + live analysis + measurement accumulation, every 100 ms
+let pkHold = -120, pkT = 0, tickN = 0;
+function tick() {
+  if (!A.ctx) return;
+  A.micAn.getFloatTimeDomainData(tbuf);
+  let s = 0, pk = 0; for (let i = 0; i < tbuf.length; i++) { const x = tbuf[i]; s += x * x; const a = x < 0 ? -x : x; if (a > pk) pk = a; }
+  const rms = 20 * Math.log10(Math.sqrt(s / tbuf.length) + 1e-12), pdb = 20 * Math.log10(pk + 1e-12), now = performance.now();
+  if (pdb > pkHold || now - pkT > 1500) { pkHold = pdb; pkT = now; }
+  const pos = db => clamp((db + 60) / 60 * 100, 0, 100) + "%";
+  els.mRms.style.width = pos(rms); els.mPk.style.left = pos(pkHold);
+  els.mTxt.textContent = "RMS " + rms.toFixed(1) + " · Pk " + pkHold.toFixed(1) + " dBFS";
+  if (pkHold > -1) { const c = document.createElement("span"); c.className = "clip"; c.textContent = " CLIP"; els.mTxt.append(c); }
+
+  A.micAn.getFloatFrequencyData(micDb); A.refAn.getFloatFrequencyData(refDb);
+  const n = micDb.length;
+  if (M.acc) {
+    const am = M.acc.mic, ar = M.acc.ref;
+    for (let k = 0; k < n; k++) { am[k] += Math.pow(10, micDb[k] / 10); if (ar) ar[k] += Math.pow(10, refDb[k] / 10); }
+    M.acc.n++;
+  }
+  if (A.playing && !M.active) {
+    if (!A.live) A.live = { mic: new Float64Array(n), ref: new Float64Array(n), n: 0 };
+    const L = A.live, k1 = L.n < 4 ? 1 / (L.n + 1) : 0.25;
+    for (let k = 0; k < n; k++) { L.mic[k] += (Math.pow(10, micDb[k] / 10) - L.mic[k]) * k1; L.ref[k] += (Math.pow(10, refDb[k] / 10) - L.ref[k]) * k1; }
+    L.n++;
+    if (++tickN % 3 === 0) draw();
+  }
+}
+
+// ---------------------------------------------------------------- calibration file
+let cal = null, calVersion = 0;
+function calAt(f) {
+  if (!cal) return 0;
+  const { fs, db } = cal; if (f <= fs[0]) return db[0]; if (f >= fs[fs.length - 1]) return db[db.length - 1];
+  let lo = 0, hi = fs.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (fs[m] <= f) lo = m; else hi = m; }
+  const t = Math.log(f / fs[lo]) / Math.log(fs[hi] / fs[lo]); return db[lo] + (db[hi] - db[lo]) * t;
+}
+els.cal.addEventListener("change", async () => {
+  const file = els.cal.files[0]; if (!file) return;
+  const pts = [];
+  for (const line of (await file.text()).split(/\r?\n/)) {
+    const nums = line.trim().split(/[\s,;]+/).map(Number);
+    if (nums.length >= 2 && isFinite(nums[0]) && isFinite(nums[1]) && nums[0] > 0) pts.push([nums[0], nums[1]]);
+  }
+  pts.sort((a, b) => a[0] - b[0]);
+  if (pts.length < 5) { els.calName.textContent = "That file has no frequency/dB pairs."; els.calName.className = "status err"; return; }
+  cal = { fs: pts.map(p => p[0]), db: pts.map(p => p[1]) }; calVersion++;
+  els.calName.textContent = file.name + " · " + pts.length + " points"; els.calName.className = "status ok";
+  recompute();
+});
+
+// ---------------------------------------------------------------- measurement
+const M = { active: false, acc: null, cancel: false };
+let captures = [], capId = 0;
+function setM(t, p, cls) { els.mstat.textContent = t; els.mstat.className = "status" + (cls ? " " + cls : ""); if (p != null) els.mprog.style.width = (p * 100).toFixed(1) + "%"; }
+async function phase(label, secs, p0, p1, acc) {
+  M.acc = acc ? { ...acc, n: 0 } : null;
+  const t0 = performance.now();
+  for (;;) {
+    if (M.cancel) { M.acc = null; throw new Error("cancelled"); }
+    const t = (performance.now() - t0) / 1000;
+    setM(label + "…", p0 + (p1 - p0) * Math.min(1, t / secs));
+    if (t >= secs) break;
+    await sleep(100);
+  }
+  const out = M.acc; M.acc = null; return out;
+}
+async function measure() {
+  if (M.active) { M.cancel = true; return; }
+  if (!(await ensureAudio())) return;
+  M.active = true; M.cancel = false;
+  els.measure.textContent = "Cancel"; els.measure.className = "live";
+  const raw = els.mmode.value === "raw", mode = cmode(), wasPlaying = A.playing;
+  let restore = null, eqAt = null, note;
+  try {
+    if (X.connected) {
+      setM("Reading the desk EQ…", 0);
+      const st = await readDesk();
+      if (raw) {
+        if (mode === "peq" && st.peqOn) { await osc([{ address: "/main/st/eq/on", args: [["i", 0]] }]); restore = () => osc([{ address: "/main/st/eq/on", args: [["i", 1]] }]); }
+        if (mode === "geq" && st.insertOn) { await osc([{ address: "/main/st/insert/on", args: [["i", 0]] }]); restore = () => osc([{ address: "/main/st/insert/on", args: [["i", 1]] }]); }
+        eqAt = mode === "peq" ? { ...st, peqOn: false } : { ...st, insertOn: false };
+        note = mode === "peq" ? "Main EQ bypassed by the tool" : "GEQ insert bypassed by the tool";
+      } else { eqAt = st; note = "Desk EQ read from the X32"; }
+    } else {
+      eqAt = raw ? null : assumedDesk();
+      note = raw ? "Assumes you bypassed the desk EQ" : "Assumes the proposed EQ is on the desk";
+    }
+    A.live = null;
+    rampNoise(0); A.playing = false; updatePlay();
+    await phase("Waiting for quiet", 1.2, 0, 0.08);
+    const floor = await phase("Measuring room noise", 2, 0.08, 0.22, { mic: new Float64Array(FFT_SIZE / 2) });
+    rampNoise(levelGain()); A.playing = true; updatePlay();
+    await phase("Noise settling", 1.5, 0.22, 0.33);
+    const acc = await phase("Measuring pink noise", 8, 0.33, 1, { mic: new Float64Array(FFT_SIZE / 2), ref: new Float64Array(FFT_SIZE / 2) });
+    const div = (a, n) => { const o = new Float64Array(a.length); for (let k = 0; k < a.length; k++) o[k] = a[k] / n; return o; };
+    const cap = { id: ++capId, time: new Date(), include: true, binHz: A.ctx.sampleRate / FFT_SIZE, mic: div(acc.mic, acc.n), ref: div(acc.ref, acc.n), floor: div(floor.mic, floor.n), eqAt, mode: raw ? "raw" : "verify", note, cache: {} };
+    // signal-to-noise check over the correction range
+    const cc = capCurves(cap, 6), snrs = [];
+    for (let i = 0; i < NG; i++) if (GRID[i] >= +els.flo.value && GRID[i] <= +els.fhi.value) snrs.push(cc.snr[i]);
+    snrs.sort((a, b) => a - b);
+    const med = snrs[snrs.length >> 1] || 0, low = snrs.filter(x => x < 10).length / Math.max(1, snrs.length);
+    captures.push(cap);
+    if (med < 15) setM("Noise is only " + med.toFixed(0) + " dB above the room. Raise the level and measure again.", 1, "err");
+    else if (low > 0.1) setM("Saved. Some bands are close to the room noise and are left out of the fit.", 1);
+    else setM("Saved position " + captures.length + ". Noise " + med.toFixed(0) + " dB above the room.", 1, "ok");
+  } catch (e) {
+    if (e.message === "cancelled") setM("Cancelled.", 0); else setM(e.message || String(e), 0, "err");
+  } finally {
+    if (restore) { try { await restore(); } catch (e) { setM("Couldn't switch the desk EQ back on. Check Main LR EQ on the desk.", null, "err"); } }
+    if (!wasPlaying) { rampNoise(0); A.playing = false; } A.live = null;
+    updatePlay();
+    M.active = false; M.cancel = false;
+    els.measure.textContent = "Measure position"; els.measure.className = "primary";
+    renderCaps(); recompute();
+  }
+}
+function capCurves(c, S) {
+  const key = S + "|" + calVersion;
+  if (c.cache[key]) return c.cache[key];
+  const mic = smooth(c.mic, c.binHz, S), ref = smooth(c.ref, c.binHz, S), fl = smooth(c.floor, c.binHz, S);
+  const eq = c.eqAt ? deskCurve(c.eqAt) : null;
+  const asMeasured = new Float64Array(NG), raw = new Float64Array(NG), snr = new Float64Array(NG);
+  for (let i = 0; i < NG; i++) {
+    asMeasured[i] = dbp(mic[i]) - dbp(ref[i]) - calAt(GRID[i]);
+    raw[i] = asMeasured[i] - (eq ? eq[i] : 0);
+    snr[i] = dbp(mic[i]) - dbp(fl[i]);
+  }
+  const o = meanIn(raw, 250, 4000);
+  for (let i = 0; i < NG; i++) { raw[i] -= o; asMeasured[i] -= o; }
+  return (c.cache[key] = { raw, asMeasured, snr });
+}
+function meanIn(a, lo, hi) { let s = 0, n = 0; for (let i = 0; i < NG; i++) if (GRID[i] >= lo && GRID[i] <= hi) { s += a[i]; n++; } return n ? s / n : 0; }
+function renderCaps() {
+  els.caps.textContent = "";
+  captures.forEach((c, idx) => {
+    const li = document.createElement("li");
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = c.include; cb.setAttribute("aria-label", "Include position " + (idx + 1));
+    cb.onchange = () => { c.include = cb.checked; recompute(); };
+    const name = document.createElement("b"); name.textContent = "#" + (idx + 1);
+    const tag = document.createElement("span"); tag.className = "tag " + c.mode; tag.textContent = c.mode === "raw" ? "NO EQ" : "WITH EQ";
+    const info = document.createElement("span"); info.className = "grow"; info.textContent = c.time.toTimeString().slice(0, 5) + " · " + c.note; info.title = c.note;
+    const x = document.createElement("button"); x.className = "x"; x.textContent = "×"; x.setAttribute("aria-label", "Delete position " + (idx + 1));
+    x.onclick = () => { captures = captures.filter(y => y !== c); renderCaps(); recompute(); };
+    li.append(cb, name, tag, info, x); els.caps.appendChild(li);
+  });
+  els.report.disabled = !captures.length;
+}
+
+// ---------------------------------------------------------------- target + fitting
+function targetCurve() {
+  const lo = +els.tlow.value, hi = +els.thigh.value, out = new Float64Array(NG);
+  for (let i = 0; i < NG; i++) { const f = GRID[i]; out[i] = lo / (1 + Math.pow(f / 100, 2)) + (f > 1000 ? hi * Math.log2(f / 1000) / 4 : 0); }
+  return out;
+}
+const PRESETS = { flat: [0, 0], house: [3, -3], speech: [0, -4] };
+const cmode = () => ($("cm-geq").checked ? "geq" : "peq");
+const peqSel = () => [...els.peqBands.querySelectorAll("input")].filter(i => i.checked).map(i => +i.value);
+
+function fitPeq(d, w, nb, maxB, maxC, fLo, fHi) {
+  const bands = [], curves = [], total = new Float64Array(NG);
+  const curveOf = b => { const o = new Float64Array(NG); addFilter(o, 2, b.f, b.g, b.q); return o; };
+  const err = (tot) => {
+    let e = 0;
+    for (let i = 0; i < NG; i++) {
+      const c = tot[i];
+      if (w[i]) { const r = d[i] - c; e += r * r; }
+      const ov = c - maxB, un = -maxC - c;
+      if (ov > 0) e += 20 * ov * ov; if (un > 0) e += 20 * un * un;
+    }
+    return e;
+  };
+  const fMin = Math.max(20, fLo / 1.25), fMax = Math.min(20000, fHi * 1.25);
+  for (let b = 0; b < nb; b++) {
+    let bi = -1, bv = 0;
+    for (let i = 0; i < NG; i++) if (w[i]) { const r = Math.abs(d[i] - total[i]); if (r > bv) { bv = r; bi = i; } }
+    if (bi < 0 || bv < 1) break;
+    const g0 = d[bi] - total[bi], sg = Math.sign(g0);
+    let lo = bi, hi = bi;
+    while (lo > 0 && (d[lo - 1] - total[lo - 1]) * sg > Math.abs(g0) / 2) lo--;
+    while (hi < NG - 1 && (d[hi + 1] - total[hi + 1]) * sg > Math.abs(g0) / 2) hi++;
+    const bw = Math.max(1 / 6, (hi - lo + 1) / 48), p2 = Math.pow(2, bw);
+    const band = { f: clamp(GRID[bi], fMin, fMax), g: clamp(g0, -maxC, maxB), q: clamp(Math.sqrt(p2) / (p2 - 1), 0.4, 8) };
+    bands.push(band); const c = curveOf(band); curves.push(c); for (let i = 0; i < NG; i++) total[i] += c[i];
+    // refine every band so far by coordinate descent
+    const steps = [0.15, 0.75, 0.25];
+    let best = err(total);
+    for (let round = 0; round < 80 && steps[0] > 0.005; round++) {
+      let improved = false;
+      for (let j = 0; j < bands.length; j++) {
+        for (let p = 0; p < 3; p++) for (const dir of [1, -1]) {
+          const t = { ...bands[j] };
+          if (p === 0) t.f = clamp(t.f * Math.pow(2, dir * steps[0]), fMin, fMax);
+          else if (p === 1) t.g = clamp(t.g + dir * steps[1], -maxC, maxB);
+          else t.q = clamp(t.q * Math.pow(2, dir * steps[2]), 0.3, 10);
+          const nc = curveOf(t), tot = new Float64Array(NG);
+          for (let i = 0; i < NG; i++) tot[i] = total[i] - curves[j][i] + nc[i];
+          const e = err(tot);
+          if (e < best - 1e-9) { best = e; bands[j] = t; curves[j] = nc; total.set(tot); improved = true; }
+        }
+      }
+      if (!improved) { steps[0] /= 2; steps[1] /= 2; steps[2] /= 2; }
+    }
+  }
+  return bands.filter(b => Math.abs(b.g) >= 0.5).sort((a, b) => a.f - b.f);
+}
+function fitGeq(d, w, maxB, maxC) {
+  const at = f => { let i = Math.round(Math.log2(f / 20) * 48); return clamp(i, 0, NG - 1); };
+  const idx = GEQ_F.map(at), gains = new Array(31).fill(0);
+  for (let it = 0; it < 60; it++) {
+    const cur = geqCurve(gains);
+    for (let k = 0; k < 31; k++) gains[k] = w[idx[k]] ? clamp(gains[k] + 0.5 * (d[idx[k]] - cur[idx[k]]), -maxC, maxB) : 0;
+  }
+  return gains.map(g => Math.round(g * 2) / 2);
+}
+
+// ---------------------------------------------------------------- recompute + proposal
+let R = { has: false };
+function fixedCurve() {
+  if (!X.state) return new Float64Array(NG);
+  return cmode() === "peq" ? deskCurve(X.state, { bands: new Set(peqSel().map(n => n - 1)) }) : deskCurve(X.state, { geq: true });
+}
+function average(S) {
+  const inc = captures.filter(c => c.include); if (!inc.length) return null;
+  const raw = new Float64Array(NG), ok = new Float64Array(NG);
+  for (const c of inc) { const cc = capCurves(c, S); for (let i = 0; i < NG; i++) { raw[i] += cc.raw[i] / inc.length; ok[i] += (cc.snr[i] >= 10 ? 1 : 0) / inc.length; } }
+  return { raw, ok, n: inc.length };
+}
+function wmean(a, w) { let s = 0, n = 0; for (let i = 0; i < NG; i++) if (w[i]) { s += a[i]; n++; } return n ? s / n : 0; }
+function wrms(a, w) { let s = 0, n = 0; for (let i = 0; i < NG; i++) if (w[i]) { s += a[i] * a[i]; n++; } return n ? Math.sqrt(s / n) : 0; }
+let rcTimer = 0;
+function recompute() { clearTimeout(rcTimer); rcTimer = setTimeout(recomputeNow, 60); }
+function recomputeNow() {
+  const S = +els.smooth.value, target = targetCurve(), mode = cmode();
+  let fLo = +els.flo.value, fHi = +els.fhi.value;
+  const maxB = +els.boost.value, maxC = +els.cut.value;
+  // don't fight the desk's own low/high cut bands that the fit isn't allowed to change
+  if (X.state && X.state.peqOn) {
+    const sel = mode === "peq" ? new Set(peqSel().map(n => n - 1)) : new Set();
+    X.state.bands.forEach((b, i) => { if (sel.has(i)) return; if (b.type === 0) fLo = Math.max(fLo, b.f * 1.6); if (b.type === 5) fHi = Math.min(fHi, b.f / 1.6); });
+  }
+  R = { has: false, target, mode, fLo, fHi };
+  const avF = average(6), avD = average(S);
+  if (avF) {
+    const fixed = fixedCurve();
+    const w = new Uint8Array(NG); for (let i = 0; i < NG; i++) w[i] = GRID[i] >= fLo && GRID[i] <= fHi && avF.ok[i] >= 0.5 ? 1 : 0;
+    const baseF = avF.raw.map((v, i) => v + fixed[i]);
+    const o = wmean(baseF.map((v, i) => v - target[i]), w);
+    const d = new Float64Array(NG); for (let i = 0; i < NG; i++) d[i] = clamp(target[i] - (baseF[i] - o), -maxC, maxB);
+    let eq, proposal;
+    if (mode === "peq") {
+      const sel = peqSel().sort((a, b) => a - b);
+      const fit = fitPeq(d, w, sel.length, maxB, maxC, fLo, fHi).map(snapBand);
+      proposal = sel.map((n, j) => fit[j] ? { band: n, type: 2, f: fit[j].f, g: fit[j].g, q: fit[j].q, used: true }
+        : snapBand({ band: n, type: 2, f: DEFAULT_BAND_F[n - 1], g: 0, q: 2, used: false }));
+      eq = new Float64Array(NG); for (const b of proposal) addFilter(eq, 2, b.f, b.g, b.q);
+    } else {
+      proposal = fitGeq(d, w, maxB, maxC); eq = geqCurve(proposal);
+    }
+    const avg = avD.raw.map((v, i) => v + fixed[i] - o);
+    const before = wrms(baseF.map((v, i) => v - o - target[i]), w);
+    const after = wrms(baseF.map((v, i) => v - o + eq[i] - target[i]), w);
+    const pos = captures.filter(c => c.include).map(c => { const cc = capCurves(c, S); return cc.raw.map((v, i) => v + fixed[i] - o); });
+    const ver = [...captures].reverse().find(c => c.mode === "verify" && c.include);
+    let verCurve = null, verRms = null;
+    if (ver) {
+      const vf = capCurves(ver, 6).asMeasured, vo = wmean(vf.map((v, i) => v - target[i]), w);
+      verCurve = capCurves(ver, S).asMeasured.map(v => v - vo);
+      verRms = wrms(vf.map((v, i) => v - vo - target[i]), w);
+    }
+    R = { has: true, target, mode, fLo, fHi, avg, pos, eq, pred: avg.map((v, i) => v + eq[i]), proposal, w, ok: avF.ok, before, after, verCurve, verRms, n: avF.n };
+  }
+  renderEq(); renderStats(); draw();
+  els.xapply.disabled = !(X.connected && R.has);
+}
+function assumedDesk() {
+  if (cmode() === "peq") {
+    const bands = X.state ? X.state.bands.map(b => ({ ...b })) : DEFAULT_BAND_F.map(f => ({ type: 2, f, g: 0, q: 2 }));
+    if (R.has) for (const b of R.proposal) bands[b.band - 1] = { type: 2, f: b.f, g: b.g, q: b.q };
+    return { peqOn: true, bands, insertOn: false, geq: null };
+  }
+  return { peqOn: false, bands: [], insertOn: true, geq: R.has ? R.proposal.slice() : new Array(31).fill(0) };
+}
+
+// ---------------------------------------------------------------- rendering: panels
+function td(text, cls) { const c = document.createElement("td"); c.textContent = text; if (cls) c.className = cls; return c; }
+function renderStats() {
+  els.stats.textContent = "";
+  const stat = (v, l) => { const d = document.createElement("div"); d.className = "stat"; const s = document.createElement("strong"); s.textContent = v; const sp = document.createElement("span"); sp.textContent = l; d.append(s, sp); els.stats.appendChild(d); };
+  if (!R.has) return;
+  stat("±" + R.before.toFixed(1) + " dB", "Off target now");
+  stat("±" + R.after.toFixed(1) + " dB", "Predicted with EQ");
+  if (R.verRms != null) stat("±" + R.verRms.toFixed(1) + " dB", "Measured with EQ");
+  stat(String(R.n), R.n === 1 ? "Position" : "Positions");
+}
+function renderEq() {
+  const wrap = els.eqTableWrap; wrap.textContent = "";
+  if (!R.has) { const p = document.createElement("p"); p.className = "note"; p.textContent = "The EQ settings appear here after the first measurement."; wrap.appendChild(p); return; }
+  if (R.mode === "peq") {
+    const t = document.createElement("table");
+    t.innerHTML = "<thead><tr><th>Band</th><th>Type</th><th>Freq Hz</th><th>Gain dB</th><th>Q</th><th>On desk now</th></tr></thead>";
+    const tb = document.createElement("tbody");
+    for (const b of R.proposal) {
+      const tr = document.createElement("tr");
+      const desk = X.state?.bands[b.band - 1];
+      tr.append(td(String(b.band), "num"), td("PEQ"), td(fmtHz(b.f)), td(b.used ? fmtDb(b.g) : "0.0", b.g < 0 ? "cut" : b.g > 0 ? "boost" : "dim"), td(b.q.toFixed(1)),
+        td(desk ? PEQ_TYPES[desk.type] + " " + fmtHz(desk.f) + " " + fmtDb(desk.g) + " Q" + desk.q.toFixed(1) : "—", "dim"));
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb); wrap.appendChild(t);
+  } else {
+    const g = document.createElement("div"); g.className = "geq";
+    R.proposal.forEach((v, k) => { const c = document.createElement("div"); const a = document.createElement("span"); a.textContent = fmtHz(GEQ_F[k]); const b = document.createElement("span"); b.textContent = fmtDb(v); b.className = v < 0 ? "cut" : v > 0 ? "boost" : "dim"; c.append(a, b); g.appendChild(c); });
+    wrap.appendChild(g);
+  }
+}
+
+// ---------------------------------------------------------------- rendering: chart
+const DB_TOP = 15, DB_BOT = -21;
+function fitCanvas(c) { const r = c.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1); const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr)); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } return dpr; }
+function draw() {
+  const c = els.chart, dpr = fitCanvas(c), g = c.getContext("2d"), W = c.width, H = c.height;
+  const padL = 36 * dpr, padR = 8 * dpr, padT = 8 * dpr, padB = 20 * dpr, pw = W - padL - padR, ph = H - padT - padB;
+  const X_ = f => padL + Math.log(f / 20) / Math.log(1000) * pw, Y_ = db => padT + (DB_TOP - clamp(db, DB_BOT - 2, DB_TOP + 2)) / (DB_TOP - DB_BOT) * ph;
+  g.clearRect(0, 0, W, H);
+  g.save(); g.beginPath(); g.rect(0, 0, W, H); g.clip();
+  g.font = (10 * dpr) + "px " + css("--mono"); g.lineWidth = 1;
+  // excluded ranges
+  const fLo = R.fLo ?? +els.flo.value, fHi = R.fHi ?? +els.fhi.value;
+  g.fillStyle = "rgba(135,150,163,.08)";
+  const xLo = X_(clamp(fLo, 20, 20000)), xHi = X_(clamp(fHi, 20, 20000));
+  g.fillRect(padL, padT, xLo - padL, ph); g.fillRect(xHi, padT, padL + pw - xHi, ph);
+  g.fillStyle = C.muted; g.textBaseline = "top"; g.textAlign = "left";
+  if (xLo - padL > 60 * dpr) g.fillText("not corrected", padL + 5 * dpr, padT + 5 * dpr);
+  if (padL + pw - xHi > 60 * dpr) { g.textAlign = "right"; g.fillText("not corrected", padL + pw - 5 * dpr, padT + 5 * dpr); }
+  // grid
+  g.strokeStyle = C.line; g.fillStyle = C.muted; g.textAlign = "right"; g.textBaseline = "middle";
+  for (let db = -18; db <= 12; db += 6) { const y = Y_(db); g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + pw, y); g.stroke(); g.fillText((db > 0 ? "+" : "") + db, padL - 5 * dpr, y); }
+  g.strokeStyle = C.muted; g.globalAlpha = .5; g.beginPath(); g.moveTo(padL, Y_(0)); g.lineTo(padL + pw, Y_(0)); g.stroke(); g.globalAlpha = 1;
+  g.strokeStyle = C.line; g.textAlign = "center"; g.textBaseline = "top";
+  for (const f of [20, 31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]) { const x = X_(f); g.beginPath(); g.moveTo(x, padT); g.lineTo(x, padT + ph); g.stroke(); g.fillText(fmtHz(f), clamp(x, padL + 10 * dpr, padL + pw - 12 * dpr), padT + ph + 5 * dpr); }
+  const line = (arr, color, width, dash, alpha) => {
+    g.save(); g.strokeStyle = color; g.lineWidth = width * dpr; g.globalAlpha = alpha ?? 1; g.setLineDash(dash ? dash.map(x => x * dpr) : []);
+    g.beginPath(); for (let i = 0; i < NG; i++) { const x = X_(GRID[i]), y = Y_(arr[i]); i ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke(); g.restore();
+  };
+  const on = id => $(id).checked;
+  if (on("lg-tgt")) line(R.target || targetCurve(), C.fg, 1.25, [5, 4], .7);
+  if (R.has) {
+    // bands close to the room noise
+    g.fillStyle = C.bad; g.globalAlpha = .6;
+    for (let i = 0; i < NG; i++) if (R.ok[i] < 0.5) { const x0 = X_(GRID[i] / Math.pow(2, 1 / 96)), x1 = X_(GRID[i] * Math.pow(2, 1 / 96)); g.fillRect(x0, padT + ph - 3 * dpr, x1 - x0 + 0.5, 3 * dpr); }
+    g.globalAlpha = 1;
+    if (on("lg-pos") && R.pos.length > 1) for (const p of R.pos) line(p, C.muted, 1, null, .45);
+    if (on("lg-avg")) line(R.avg, C.trace, 2);
+    if (on("lg-ver") && R.verCurve) line(R.verCurve, C.verify, 1.75);
+    if (on("lg-pred")) line(R.pred, C.pred, 1.75);
+    if (on("lg-eq")) {
+      line(R.eq, C.accent, 2);
+      if (R.mode === "peq") {
+        g.font = "600 " + (10 * dpr) + "px " + css("--mono"); g.textAlign = "center"; g.textBaseline = "middle";
+        for (const b of R.proposal) {
+          if (!b.used) continue;
+          const i = clamp(Math.round(Math.log2(b.f / 20) * 48), 0, NG - 1), x = X_(b.f), y = Y_(R.eq[i]);
+          g.fillStyle = C.accent; g.beginPath(); g.arc(x, y, 7 * dpr, 0, 7); g.fill();
+          g.fillStyle = "#1b1305"; g.fillText(String(b.band), x, y + 0.5 * dpr);
+        }
+      }
+    }
+  }
+  if (on("lg-live") && A.live && A.playing && A.live.n > 2) {
+    const binHz = A.ctx.sampleRate / FFT_SIZE, S = +els.smooth.value;
+    const m = smooth(A.live.mic, binHz, S, true), r = smooth(A.live.ref, binHz, S, true), lv = new Float64Array(NG);
+    for (let i = 0; i < NG; i++) lv[i] = dbp(m[i]) - dbp(r[i]) - calAt(GRID[i]);
+    const tg = R.target || targetCurve(); const o = meanIn(lv.map((v, i) => v - tg[i]), 250, 4000);
+    line(lv.map(v => v - o), C.fg, 1.25, null, .85);
+  }
+  if (!R.has && !(A.live && A.playing)) {
+    g.fillStyle = C.muted; g.textAlign = "center"; g.textBaseline = "middle"; g.font = (13 * dpr) + "px " + css("--sans");
+    g.fillText("Press Measure position to see how the room changes the pink noise.", padL + pw / 2, padT + ph * 0.7);
+  }
+  g.restore();
+}
+
+// ---------------------------------------------------------------- X32 bridge client
+const X = { base: location.protocol.startsWith("http") ? "" : "http://localhost:8032", bridge: false, connected: false, host: "", state: null, undo: null, info: "" };
+function setX(t, cls) { els.xstat.textContent = t; els.xstat.className = "status" + (cls ? " " + cls : ""); }
+async function api(path, body) {
+  const r = await fetch(X.base + path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || "Bridge error " + r.status);
+  return j;
+}
+async function osc(messages, timeout = 0.6) {
+  const r = await api("/api/osc", { host: X.host, port: 10023, messages, timeout });
+  const bad = r.results.find(x => x.error);
+  if (bad) throw new Error("The desk didn't answer " + bad.address + " (" + bad.error + "). Check the IP address and that the laptop is on the desk's network.");
+  return r.results;
+}
+async function checkBridge() {
+  try { const j = await api("/api/ping"); X.bridge = true; els.bstat.textContent = "Bridge running" + (j.bridge && j.bridge !== "dev" ? " · build " + j.bridge : ""); els.bstat.className = "status ok"; }
+  catch (_) { X.bridge = false; els.bstat.textContent = "Bridge not running"; els.bstat.className = "status err"; }
+  renderX();
+}
+function renderX() {
+  els.xconnect.disabled = !X.bridge;
+  els.xread.disabled = !X.connected;
+  els.xundo.disabled = !X.connected || !X.undo;
+  els.xapply.disabled = !(X.connected && R.has);
+  els.xconnect.textContent = X.connected ? "Reconnect" : "Connect";
+  if (!X.bridge) setX("Start the bridge (python x32_bridge.py) and open this page from http://localhost:8032 to control the desk. You can still measure and enter the EQ by hand.");
+}
+async function connect() {
+  X.host = els.xip.value.trim();
+  if (!/^[\w.-]+$/.test(X.host)) { setX("Enter the desk's IP address, for example 192.168.1.20 (Setup › Network on the desk).", "err"); return; }
+  saveSettings(); setX("Connecting…");
+  try {
+    const [r] = await osc([{ address: "/info", reply: true }], 1.2);
+    X.connected = true; X.info = (r.args[2] || "X32") + " · firmware " + (r.args[3] || "?");
+    await readDesk();
+    // keep the desk's own low/high cut bands: untick them so the fit never overwrites them
+    const kept = [];
+    X.state.bands.forEach((b, i) => { if (b.type === 0 || b.type === 5) { const cb = $("band" + (i + 1)); if (cb.checked) { cb.checked = false; kept.push(i + 1); } } });
+    if (kept.length) saveSettings();
+    setX("Connected to " + X.info + ". Main EQ " + (X.state.peqOn ? "on" : "off") + "." + (kept.length ? " Band " + kept.join(" and ") + " is a low/high cut, so it's left alone." : ""), "ok");
+  } catch (e) { X.connected = false; setX(e.message, "err"); }
+  renderX(); recompute();
+}
+async function readDesk() {
+  const slot = +els.geqSlot.value, wantGeq = cmode() === "geq";
+  const msgs = [{ address: "/main/st/eq/on", reply: true }, { address: "/main/st/insert/on", reply: true }];
+  for (let n = 1; n <= 6; n++) for (const p of ["type", "f", "g", "q"]) msgs.push({ address: `/main/st/eq/${n}/${p}`, reply: true });
+  if (wantGeq) { msgs.push({ address: `/fx/${slot}/type`, reply: true }); for (let k = 1; k <= 31; k++) msgs.push({ address: `/fx/${slot}/par/${String(k).padStart(2, "0")}`, reply: true }); }
+  const res = await osc(msgs);
+  const v = a => res.find(r => r.address === a).args[0];
+  const st = { peqOn: !!v("/main/st/eq/on"), insertOn: !!v("/main/st/insert/on"), bands: [], geq: null, fxType: null, slot };
+  for (let n = 1; n <= 6; n++) st.bands.push({ type: v(`/main/st/eq/${n}/type`) | 0, f: X32.vToF(v(`/main/st/eq/${n}/f`)), g: X32.vToG(v(`/main/st/eq/${n}/g`)), q: X32.vToQ(v(`/main/st/eq/${n}/q`)) });
+  if (wantGeq) {
+    st.fxType = v(`/fx/${slot}/type`) | 0;
+    if (GEQ_FX_TYPES[st.fxType]) st.geq = Array.from({ length: 31 }, (_, k) => X32.vToG(v(`/fx/${slot}/par/${String(k + 1).padStart(2, "0")}`)));
+  }
+  X.state = st; renderEq();
+  return st;
+}
+async function apply() {
+  if (!R.has) return;
+  els.xapply.disabled = true;
+  try {
+    setX("Reading the desk before changing it…");
+    const before = await readDesk();
+    const msgs = [];
+    if (R.mode === "peq") {
+      for (const b of R.proposal) {
+        const p = `/main/st/eq/${b.band}/`;
+        msgs.push({ address: p + "type", args: [["i", 2]] }, { address: p + "f", args: [["f", X32.fToV(b.f)]] }, { address: p + "g", args: [["f", X32.gToV(b.g)]] }, { address: p + "q", args: [["f", X32.qToV(b.q)]] });
+      }
+      msgs.push({ address: "/main/st/eq/on", args: [["i", 1]] });
+    } else {
+      if (!GEQ_FX_TYPES[before.fxType]) throw new Error(`FX slot ${before.slot} doesn't hold a graphic EQ (desk reports type ${before.fxType}). Put a GEQ or TruEQ in that slot and insert it on Main LR first.`);
+      const dual = before.fxType === 27 || before.fxType === 29;
+      R.proposal.forEach((g, k) => {
+        const v = (clamp(g, -15, 15) + 15) / 30;
+        msgs.push({ address: `/fx/${before.slot}/par/${String(k + 1).padStart(2, "0")}`, args: [["f", v]] });
+        if (dual) msgs.push({ address: `/fx/${before.slot}/par/${String(k + 32).padStart(2, "0")}`, args: [["f", v]] });
+      });
+    }
+    X.undo = { mode: R.mode, state: before };
+    setX("Sending " + (R.mode === "peq" ? R.proposal.length + " bands" : "31 bands") + "…");
+    await osc(msgs);
+    const after = await readDesk();
+    let bad = 0;
+    if (R.mode === "peq") for (const b of R.proposal) { const a = after.bands[b.band - 1]; if (a.type !== 2 || Math.abs(Math.log2(a.f / b.f)) > 0.02 || Math.abs(a.g - b.g) > 0.3 || Math.abs(Math.log2(a.q / b.q)) > 0.1) bad++; }
+    else R.proposal.forEach((g, k) => { if (!after.geq || Math.abs(after.geq[k] - g) > 0.6) bad++; });
+    if (bad) setX(bad + " setting(s) read back differently from what was sent. Check them on the desk.", "err");
+    else setX("Sent and confirmed. " + (R.mode === "geq" && !after.insertOn ? "The Main LR insert is off: switch it on to hear the GEQ. " : "") + "Measure again with “As it is now” to check the result.", "ok");
+    els.mmode.value = "verify";
+  } catch (e) { setX(e.message, "err"); }
+  renderX(); recompute();
+}
+async function undo() {
+  if (!X.undo) return;
+  const { mode, state } = X.undo, msgs = [];
+  if (mode === "peq") {
+    state.bands.forEach((b, i) => { const p = `/main/st/eq/${i + 1}/`; msgs.push({ address: p + "type", args: [["i", b.type]] }, { address: p + "f", args: [["f", X32.fToV(b.f)]] }, { address: p + "g", args: [["f", X32.gToV(b.g)]] }, { address: p + "q", args: [["f", X32.qToV(b.q)]] }); });
+    msgs.push({ address: "/main/st/eq/on", args: [["i", state.peqOn ? 1 : 0]] });
+  } else if (state.geq) {
+    const dual = state.fxType === 27 || state.fxType === 29;
+    state.geq.forEach((g, k) => { const v = (g + 15) / 30; msgs.push({ address: `/fx/${state.slot}/par/${String(k + 1).padStart(2, "0")}`, args: [["f", v]] }); if (dual) msgs.push({ address: `/fx/${state.slot}/par/${String(k + 32).padStart(2, "0")}`, args: [["f", v]] }); });
+  }
+  try { await osc(msgs); await readDesk(); X.undo = null; setX("The desk EQ is back to how it was before the last send.", "ok"); }
+  catch (e) { setX(e.message, "err"); }
+  renderX(); recompute();
+}
+
+// ---------------------------------------------------------------- CSV report
+els.report.addEventListener("click", () => {
+  if (!R.has) return;
+  const rows = [["frequency_hz", "room_no_eq_db", "target_db", "proposed_eq_db", "predicted_db", "measured_with_eq_db"]];
+  for (let i = 0; i < NG; i += 2) rows.push([GRID[i].toFixed(1), R.avg[i].toFixed(2), R.target[i].toFixed(2), R.eq[i].toFixed(2), R.pred[i].toFixed(2), R.verCurve ? R.verCurve[i].toFixed(2) : ""]);
+  rows.push([]);
+  if (R.mode === "peq") { rows.push(["main_lr_band", "type", "frequency_hz", "gain_db", "q"]); for (const b of R.proposal) rows.push([b.band, "PEQ", b.f.toFixed(1), b.g.toFixed(2), b.q.toFixed(2)]); }
+  else { rows.push(["geq_band_hz", "gain_db"]); R.proposal.forEach((g, k) => rows.push([GEQ_F[k], g.toFixed(1)])); }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([rows.map(r => r.join(",")).join("\n")], { type: "text/csv" }));
+  a.download = "room-tuning-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-") + ".csv";
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
+
+// ---------------------------------------------------------------- wiring
+function syncOutputs() {
+  $("levelOut").textContent = "−" + Math.abs(els.level.value) + " dBFS";
+  $("tlowOut").textContent = "+" + (+els.tlow.value).toFixed(1) + " dB";
+  $("thighOut").textContent = fmtDb(+els.thigh.value) + " dB";
+  $("boostOut").textContent = "+" + (+els.boost.value).toFixed(1) + " dB";
+  $("cutOut").textContent = "−" + els.cut.value + " dB";
+  const geq = cmode() === "geq"; els.geqSlotWrap.hidden = !geq; els.peqBandsWrap.hidden = geq;
+}
+(function buildBands() {
+  for (let n = 1; n <= 6; n++) { const l = document.createElement("label"); const i = document.createElement("input"); i.type = "checkbox"; i.value = n; i.checked = true; i.id = "band" + n; l.append(i, document.createTextNode(String(n))); els.peqBands.appendChild(l); }
+})();
+loadSettings();
+if (Array.isArray(want.bands)) els.peqBands.querySelectorAll("input").forEach(i => { i.checked = want.bands.includes(+i.value); });
+syncOutputs();
+
+els.play.addEventListener("click", () => setNoise(!A.playing));
+els.measure.addEventListener("click", measure);
+els.level.addEventListener("input", () => { syncOutputs(); if (A.playing) rampNoise(levelGain()); saveSettings(); });
+els.outDev.addEventListener("change", async () => { saveSettings(); if (A.ctx) await applySink(); });
+els.outCh.addEventListener("change", () => { saveSettings(); if (A.ctx) configureOutputs(); });
+els.inDev.addEventListener("change", async () => { saveSettings(); if (A.ctx) { try { await openInput(); } catch (e) { setA(e.message, "err"); } } });
+els.inCh.addEventListener("change", () => { saveSettings(); if (A.ctx) wireInput(); });
+els.tpreset.addEventListener("change", () => { const p = PRESETS[els.tpreset.value]; if (p) { els.tlow.value = p[0]; els.thigh.value = p[1]; } syncOutputs(); saveSettings(); recompute(); });
+for (const id of ["tlow", "thigh"]) els[id].addEventListener("input", () => { els.tpreset.value = "custom"; syncOutputs(); saveSettings(); recompute(); });
+for (const id of ["boost", "cut", "flo", "fhi", "smooth"]) els[id].addEventListener("input", () => { syncOutputs(); saveSettings(); recompute(); });
+for (const id of ["cm-peq", "cm-geq"]) $(id).addEventListener("change", async () => { syncOutputs(); saveSettings(); if (X.connected) { try { await readDesk(); } catch (e) { setX(e.message, "err"); } } recompute(); });
+els.geqSlot.addEventListener("change", async () => { saveSettings(); if (X.connected && cmode() === "geq") { try { await readDesk(); } catch (e) { setX(e.message, "err"); } recompute(); } });
+els.peqBands.addEventListener("change", () => { saveSettings(); recompute(); });
+els.mmode.addEventListener("change", saveSettings);
+els.xconnect.addEventListener("click", connect);
+els.xread.addEventListener("click", async () => { try { await readDesk(); setX("Read the desk EQ.", "ok"); } catch (e) { setX(e.message, "err"); } recompute(); });
+els.xapply.addEventListener("click", apply);
+els.xundo.addEventListener("click", undo);
+els.legend.addEventListener("change", draw);
+els.xip.addEventListener("keydown", e => { if (e.key === "Enter") connect(); });
+navigator.mediaDevices?.addEventListener?.("devicechange", listDevices);
+window.addEventListener("resize", draw);
+listDevices().catch(() => {});
+renderCaps(); recompute(); checkBridge();
+window.__rt = { A, R: () => R, captures: () => captures, X, fitPeq, GRID, targetCurve }; // for testing
+})();
+</script>
+</body>
+</html>
